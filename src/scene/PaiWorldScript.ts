@@ -20,6 +20,13 @@ import {
 
 export type SceneViewMode = 'title' | 'avatar_studio' | 'schoolyard' | 'minigame';
 
+export interface ViewportMargins {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
 export interface WorldInteractionCallbacks {
   onClickKiosk?: (elementId: string) => void;
   onClickOption?: (optionIndex: number) => void;
@@ -27,7 +34,7 @@ export interface WorldInteractionCallbacks {
   onClickDice?: () => void;
   onClickCraftTable?: () => void;
   onClickArtifact?: (index: number) => void;
-  onPlayerMoveSync?: (pos: { x: number; y: number; z: number }) => void;
+  onPlayerMoveSync?: (pos: { x: number; y: number; z: number }, rotY: number) => void;
 }
 
 interface BurstParticle {
@@ -58,7 +65,10 @@ export class PaiWorldScript extends xb.Script {
   private feedbackTimer = 0;
   private feedbackAnim: 'celebrate' | 'fall' | null = null;
 
-  private peerAvatars = new Map<string, { avatar: RobloxAvatar; target: THREE.Vector3 }>();
+  private peerAvatars = new Map<
+    string,
+    { avatar: RobloxAvatar; target: THREE.Vector3; targetRotY: number; avatarSig: string }
+  >();
   private particles: BurstParticle[] = [];
   private particleGeo = new THREE.BoxGeometry(0.18, 0.18, 0.18);
 
@@ -74,12 +84,14 @@ export class PaiWorldScript extends xb.Script {
   private shakeIntensity = 0;
   private clockElapsed = 0;
   private lastMoveSyncAt = 0;
+  private viewportMargins: ViewportMargins = { left: 0, right: 0, top: 0, bottom: 0 };
 
   public callbacks: WorldInteractionCallbacks = {};
 
   private onKeyDownBound = (e: KeyboardEvent) => this.handleKeyDown(e);
   private onKeyUpBound = (e: KeyboardEvent) => this.handleKeyUp(e);
   private onPointerDownBound = (e: PointerEvent) => this.handlePointerDown(e);
+  private onResizeBound = () => this.applyCameraViewportOffset();
 
   init(): void {
     const renderer = xb.core.renderer as THREE.WebGLRenderer;
@@ -152,10 +164,54 @@ export class PaiWorldScript extends xb.Script {
 
     window.addEventListener('keydown', this.onKeyDownBound);
     window.addEventListener('keyup', this.onKeyUpBound);
+    window.addEventListener('resize', this.onResizeBound);
     renderer.domElement.addEventListener('pointerdown', this.onPointerDownBound);
 
     // Start with welcoming sunlit Schoolyard backdrop on Login screen
     this.setViewMode('title');
+  }
+
+  /**
+   * Centers the 3D scene's optical focal point inside the remaining open viewport
+   * after accounting for sidebars / top bars / bottom panels.
+   */
+  setViewportMargins(margins: Partial<ViewportMargins>): void {
+    this.viewportMargins = {
+      left: Math.max(0, margins.left ?? 0),
+      right: Math.max(0, margins.right ?? 0),
+      top: Math.max(0, margins.top ?? 0),
+      bottom: Math.max(0, margins.bottom ?? 0),
+    };
+    this.applyCameraViewportOffset();
+  }
+
+  private applyCameraViewportOffset(): void {
+    const renderer = xb.core.renderer as THREE.WebGLRenderer | undefined;
+    const cam = xb.core.camera as THREE.PerspectiveCamera | undefined;
+    if (!cam || !(cam instanceof THREE.PerspectiveCamera)) return;
+    if (renderer?.xr?.isPresenting) {
+      cam.clearViewOffset();
+      return;
+    }
+
+    const w = Math.max(1, window.innerWidth);
+    const h = Math.max(1, window.innerHeight);
+    const { left, right, top, bottom } = this.viewportMargins;
+
+    if (left === 0 && right === 0 && top === 0 && bottom === 0) {
+      cam.clearViewOffset();
+      cam.aspect = w / h;
+      cam.updateProjectionMatrix();
+      return;
+    }
+
+    // Optical center shifts to (w/2 - offsetX, h/2 - offsetY).
+    // Desired center of remaining area is (w/2 + (left - right)/2, h/2 + (top - bottom)/2),
+    // so offsetX = (right - left)/2 and offsetY = (bottom - top)/2.
+    const offsetX = Math.round((right - left) / 2);
+    const offsetY = Math.round((bottom - top) / 2);
+    cam.setViewOffset(w, h, offsetX, offsetY, w, h);
+    cam.updateProjectionMatrix();
   }
 
   setElements(elements: PaiElement[]): void {
@@ -277,23 +333,42 @@ export class PaiWorldScript extends xb.Script {
     participants.forEach((p, idx) => {
       if (p.id === selfId || !p.connected) return;
       seen.add(p.id);
+      const sig = JSON.stringify(p.avatar);
+      const subLabel =
+        this.viewMode === 'schoolyard'
+          ? p.isReady
+            ? `Kls ${p.kelas} · Siap!`
+            : `Kls ${p.kelas}`
+          : `${p.score} pts`;
+
       let entry = this.peerAvatars.get(p.id);
       if (!entry) {
-        const av = new RobloxAvatar(p.avatar, p.nama, `${p.score} pts`);
-        const initial = new THREE.Vector3(p.pos.x, p.pos.y, p.pos.z);
+        const av = new RobloxAvatar(p.avatar, p.nama, subLabel);
+        const initial = new THREE.Vector3(p.pos.x, 0.08, p.pos.z);
         av.group.position.copy(initial);
+        av.group.rotation.y = typeof p.rotY === 'number' ? p.rotY : Math.PI;
         this.add(av.group);
-        entry = { avatar: av, target: initial };
+        entry = {
+          avatar: av,
+          target: initial,
+          targetRotY: typeof p.rotY === 'number' ? p.rotY : Math.PI,
+          avatarSig: sig,
+        };
         this.peerAvatars.set(p.id, entry);
       } else {
-        entry.avatar.setLabel(p.nama, `${p.score} pts`);
+        if (entry.avatarSig !== sig) {
+          entry.avatar.applyConfig(p.avatar);
+          entry.avatarSig = sig;
+        }
+        entry.avatar.setLabel(p.nama, subLabel);
       }
 
       if (this.viewMode === 'schoolyard') {
         entry.target.set(p.pos.x, 0.08, p.pos.z);
+        if (typeof p.rotY === 'number') entry.targetRotY = p.rotY;
         entry.avatar.group.visible = true;
       } else if (this.viewMode === 'minigame') {
-        // Show classmates sharing the minigame progression!
+        // Show classmates sharing the minigame progression
         const offsetX = ((idx % 4) - 1.5) * 1.65;
         if (this.activeWorld?.getPlayerTargetPos) {
           const base = this.activeWorld.getPlayerTargetPos(p.progressValue, idx % 4);
@@ -301,7 +376,8 @@ export class PaiWorldScript extends xb.Script {
         } else {
           entry.target.set(offsetX * 1.4, 0, 2.8);
         }
-        entry.avatar.group.visible = true;
+        entry.targetRotY = Math.PI;
+        entry.avatar.group.visible = p.approvedForMission;
       } else {
         entry.avatar.group.visible = false;
       }
@@ -316,10 +392,25 @@ export class PaiWorldScript extends xb.Script {
     }
   }
 
-  updatePeerPosition(id: string, pos: { x: number; y: number; z: number }): void {
+  updatePeerPosition(id: string, pos: { x: number; y: number; z: number }, rotY?: number): void {
     const entry = this.peerAvatars.get(id);
     if (entry && this.viewMode === 'schoolyard') {
       entry.target.set(pos.x, 0.08, pos.z);
+      if (typeof rotY === 'number' && Number.isFinite(rotY)) {
+        entry.targetRotY = rotY;
+      }
+    }
+  }
+
+  showAvatarChatBubble(senderId: string, selfId: string | null, text: string): void {
+    if (this.viewMode !== 'schoolyard') return;
+    if (selfId && senderId === selfId) {
+      this.playerAvatar?.showChatBubble(text);
+      return;
+    }
+    const peer = this.peerAvatars.get(senderId);
+    if (peer) {
+      peer.avatar.showChatBubble(text);
     }
   }
 
@@ -457,15 +548,20 @@ export class PaiWorldScript extends xb.Script {
     // Update active world
     this.activeWorld?.updateWorld(dt, this.clockElapsed, this.currentProgress);
 
-    // Update peers smoothly
+    // Update peers smoothly (position + facing angle)
     for (const entry of this.peerAvatars.values()) {
       const dist = entry.avatar.group.position.distanceTo(entry.target);
       if (dist > 0.06) {
-        entry.avatar.group.position.lerp(entry.target, Math.min(1, dt * 6));
+        entry.avatar.group.position.lerp(entry.target, Math.min(1, dt * 7));
         entry.avatar.animState = 'walk';
       } else {
         entry.avatar.animState = 'idle';
       }
+      // Smooth shortest-arc yaw interpolation
+      let dYaw = entry.targetRotY - entry.avatar.group.rotation.y;
+      while (dYaw > Math.PI) dYaw -= Math.PI * 2;
+      while (dYaw < -Math.PI) dYaw += Math.PI * 2;
+      entry.avatar.group.rotation.y += dYaw * Math.min(1, dt * 9);
       entry.avatar.update(dt);
     }
 
@@ -509,13 +605,16 @@ export class PaiWorldScript extends xb.Script {
         if (this.playerAvatar) {
           this.playerAvatar.group.rotation.y = Math.atan2(mx, mz);
         }
-        if (performance.now() - this.lastMoveSyncAt > 180) {
+        if (performance.now() - this.lastMoveSyncAt > 140) {
           this.lastMoveSyncAt = performance.now();
-          this.callbacks.onPlayerMoveSync?.({
-            x: Number(this.playerPos.x.toFixed(2)),
-            y: Number(this.playerPos.y.toFixed(2)),
-            z: Number(this.playerPos.z.toFixed(2)),
-          });
+          this.callbacks.onPlayerMoveSync?.(
+            {
+              x: Number(this.playerPos.x.toFixed(2)),
+              y: Number(this.playerPos.y.toFixed(2)),
+              z: Number(this.playerPos.z.toFixed(2)),
+            },
+            Number((this.playerAvatar?.group.rotation.y ?? 0).toFixed(2))
+          );
         }
       }
 
@@ -616,6 +715,7 @@ export class PaiWorldScript extends xb.Script {
   dispose(): void {
     window.removeEventListener('keydown', this.onKeyDownBound);
     window.removeEventListener('keyup', this.onKeyUpBound);
+    window.removeEventListener('resize', this.onResizeBound);
     xb.core.renderer?.domElement?.removeEventListener('pointerdown', this.onPointerDownBound);
     this.clearWorld();
     this.playerAvatar?.dispose();

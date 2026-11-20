@@ -98,6 +98,10 @@ async function bootstrap(): Promise<void> {
 
   realtimeClient.on('teacherAuth', (res) => {
     if (res.ok && res.sekolah) {
+      if (activeRole === 'teacher') {
+        if (res.snapshot) teacherUI.applySnapshot(res.snapshot);
+        return;
+      }
       activeRole = 'teacher';
       studentUI.unmount();
       teacherUI.mount(res.sekolah, res.snapshot ?? realtimeClient.snapshot);
@@ -123,8 +127,32 @@ async function bootstrap(): Promise<void> {
     }
   });
 
-  realtimeClient.on('playerMoved', ({ id, pos }) => {
-    worldScript.updatePeerPosition(id, pos);
+  realtimeClient.on('studentApproved', ({ participantId, snapshot }) => {
+    if (activeRole === 'student') {
+      studentUI.handleStudentApproved(participantId, snapshot);
+    } else {
+      teacherUI.applySnapshot(snapshot);
+    }
+  });
+
+  realtimeClient.on('playerMoved', ({ id, pos, rotY }) => {
+    worldScript.updatePeerPosition(id, pos, rotY);
+  });
+
+  realtimeClient.on('chatMessage', ({ message, snapshot }) => {
+    if (activeRole === 'student') {
+      studentUI.handleChatMessage(message, snapshot);
+    } else {
+      teacherUI.handleChatMessage(message, snapshot);
+    }
+  });
+
+  realtimeClient.on('chatRejected', (reason) => {
+    if (activeRole === 'student') {
+      studentUI.handleChatRejected(reason);
+    } else {
+      showToast(reason);
+    }
   });
 
   realtimeClient.on('buffAttacked', (payload) => {

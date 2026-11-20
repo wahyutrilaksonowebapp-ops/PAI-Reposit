@@ -2,9 +2,11 @@ import type {
   AnswerLogEntry,
   AvatarConfig,
   BuffType,
+  ChatMessage,
   DifficultyLevel,
   GameId,
   PaiElement,
+  ParticipantActivity,
   QuestionItem,
   RoomSnapshot,
   TestimonialItem,
@@ -16,7 +18,8 @@ export type RealtimeEventMap = {
   teacherAuth: { ok: boolean; sekolah?: string; error?: string; snapshot?: RoomSnapshot };
   missionStarted: RoomSnapshot;
   missionEnded: { reason: string; snapshot: RoomSnapshot };
-  playerMoved: { id: string; pos: { x: number; y: number; z: number } };
+  studentApproved: { participantId: string; snapshot: RoomSnapshot };
+  playerMoved: { id: string; pos: { x: number; y: number; z: number }; rotY: number };
   buffAttacked: {
     attackerName: string;
     targetId: string;
@@ -24,6 +27,8 @@ export type RealtimeEventMap = {
     amount: number;
     snapshot: RoomSnapshot;
   };
+  chatMessage: { message: ChatMessage; snapshot: RoomSnapshot };
+  chatRejected: string;
   reflectionSaved: TestimonialItem;
   connectionChange: boolean;
 };
@@ -35,6 +40,8 @@ export class RealtimeClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private listeners = new Map<keyof RealtimeEventMap, Set<Listener<never>>>();
   private lastJoinPayload: Record<string, unknown> | null = null;
+  private lastTeacherLogin: { code: string; sekolah: string } | null = null;
+  private pendingQueue: Record<string, unknown>[] = [];
   public connected = false;
   public snapshot: RoomSnapshot | null = null;
 
@@ -56,8 +63,24 @@ export class RealtimeClient {
     this.ws.addEventListener('open', () => {
       this.connected = true;
       this.emit('connectionChange', true);
+
+      if (this.lastTeacherLogin) {
+        this.sendImmediate({
+          type: 'teacher:login',
+          code: this.lastTeacherLogin.code,
+          sekolah: this.lastTeacherLogin.sekolah,
+        });
+      }
       if (this.lastJoinPayload) {
-        this.send(this.lastJoinPayload);
+        this.sendImmediate(this.lastJoinPayload);
+      }
+
+      // Flush any queued messages (skip duplicates of join/login already sent above)
+      const queue = this.pendingQueue.splice(0, this.pendingQueue.length);
+      for (const item of queue) {
+        if (item.type === 'student:join' && this.lastJoinPayload) continue;
+        if (item.type === 'teacher:login' && this.lastTeacherLogin) continue;
+        this.sendImmediate(item);
       }
     });
 
@@ -79,11 +102,18 @@ export class RealtimeClient {
           break;
         case 'student:joined':
           if (this.snapshot) {
-            this.emit('joined', { id: String(data.id), snapshot: this.snapshot });
+            const joinedId = String(data.id);
+            if (this.lastJoinPayload) {
+              this.lastJoinPayload = { ...this.lastJoinPayload, id: joinedId };
+            }
+            this.emit('joined', { id: joinedId, snapshot: this.snapshot });
             this.emit('snapshot', this.snapshot);
           }
           break;
         case 'teacher:auth':
+          if (!data.ok) {
+            this.lastTeacherLogin = null;
+          }
           this.emit('teacherAuth', {
             ok: Boolean(data.ok),
             sekolah: typeof data.sekolah === 'string' ? data.sekolah : undefined,
@@ -106,10 +136,20 @@ export class RealtimeClient {
             this.emit('snapshot', this.snapshot);
           }
           break;
+        case 'student:approved':
+          if (this.snapshot) {
+            this.emit('studentApproved', {
+              participantId: String(data.participantId || ''),
+              snapshot: this.snapshot,
+            });
+            this.emit('snapshot', this.snapshot);
+          }
+          break;
         case 'player:moved':
           this.emit('playerMoved', {
             id: String(data.id),
             pos: data.pos as { x: number; y: number; z: number },
+            rotY: typeof data.rotY === 'number' ? data.rotY : 0,
           });
           break;
         case 'buff:attacked':
@@ -123,6 +163,18 @@ export class RealtimeClient {
             });
             this.emit('snapshot', this.snapshot);
           }
+          break;
+        case 'chat:message':
+          if (this.snapshot && data.message) {
+            this.emit('chatMessage', {
+              message: data.message as ChatMessage,
+              snapshot: this.snapshot,
+            });
+            this.emit('snapshot', this.snapshot);
+          }
+          break;
+        case 'chat:rejected':
+          this.emit('chatRejected', String(data.reason || 'Pesan tidak dapat dikirim.'));
           break;
         case 'reflection:saved':
           if (data.item) this.emit('reflectionSaved', data.item as TestimonialItem);
@@ -167,9 +219,20 @@ export class RealtimeClient {
     }
   }
 
-  private send(payload: Record<string, unknown>): void {
+  private sendImmediate(payload: Record<string, unknown>): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(payload));
+    }
+  }
+
+  private send(payload: Record<string, unknown>, queueIfOffline = true): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(payload));
+    } else if (queueIfOffline) {
+      this.pendingQueue.push(payload);
+      if (this.pendingQueue.length > 30) {
+        this.pendingQueue.shift();
+      }
     }
   }
 
@@ -192,21 +255,41 @@ export class RealtimeClient {
     kelas: string;
     sekolah: string;
     avatar: AvatarConfig;
+    activity?: ParticipantActivity;
   }): void {
     const msg = { type: 'student:join', ...payload };
     this.lastJoinPayload = msg;
-    this.send(msg);
+    this.send(msg, true);
   }
 
-  updateAvatar(id: string, avatar: AvatarConfig): void {
+  clearStudentSession(): void {
+    this.lastJoinPayload = null;
+  }
+
+  updateAvatar(id: string, avatar: AvatarConfig, activity?: ParticipantActivity): void {
     if (this.lastJoinPayload) {
-      this.lastJoinPayload = { ...this.lastJoinPayload, avatar };
+      this.lastJoinPayload = {
+        ...this.lastJoinPayload,
+        avatar,
+        ...(activity ? { activity } : {}),
+      };
     }
-    this.send({ type: 'student:update_avatar', id, avatar });
+    this.send({ type: 'student:update_avatar', id, avatar, activity }, true);
   }
 
-  sendMove(id: string, pos: { x: number; y: number; z: number }): void {
-    this.send({ type: 'student:move', id, pos });
+  updateActivity(id: string, activity: ParticipantActivity): void {
+    if (this.lastJoinPayload) {
+      this.lastJoinPayload = { ...this.lastJoinPayload, activity };
+    }
+    this.send({ type: 'student:update_activity', id, activity }, true);
+  }
+
+  setReady(id: string, ready: boolean): void {
+    this.send({ type: 'student:set_ready', id, ready }, true);
+  }
+
+  sendMove(id: string, pos: { x: number; y: number; z: number }, rotY = 0): void {
+    this.send({ type: 'student:move', id, pos, rotY }, false);
   }
 
   syncProgress(payload: {
@@ -223,11 +306,11 @@ export class RealtimeClient {
     progressLabel: string;
     answerEntry?: AnswerLogEntry;
   }): void {
-    this.send({ type: 'student:sync_progress', ...payload });
+    this.send({ type: 'student:sync_progress', ...payload }, true);
   }
 
   attackPlayer(attackerId: string, targetId: string, amount = 150): void {
-    this.send({ type: 'student:attack_player', attackerId, targetId, amount });
+    this.send({ type: 'student:attack_player', attackerId, targetId, amount }, true);
   }
 
   submitReflection(payload: {
@@ -240,11 +323,44 @@ export class RealtimeClient {
     komentar: string;
     kritikSaran: string;
   }): void {
-    this.send({ type: 'student:submit_reflection', ...payload });
+    this.send({ type: 'student:submit_reflection', ...payload }, true);
   }
 
+  // === MODERATED CHAT ===
+  sendChat(payload: {
+    role: 'student' | 'teacher';
+    senderId?: string;
+    senderName?: string;
+    text: string;
+    pin?: boolean;
+  }): void {
+    this.send({ type: 'chat:send', ...payload }, true);
+  }
+
+  deleteChatMessage(messageId: string): void {
+    this.send({ type: 'chat:delete', messageId }, true);
+  }
+
+  pinChatMessage(messageId: string): void {
+    this.send({ type: 'chat:pin', messageId }, true);
+  }
+
+  toggleMuteAll(muted?: boolean): void {
+    this.send({ type: 'chat:toggle_mute_all', muted }, true);
+  }
+
+  toggleMuteStudent(participantId: string): void {
+    this.send({ type: 'chat:toggle_mute_student', participantId }, true);
+  }
+
+  // === TEACHER ADMIN & APPROVAL ===
   loginTeacher(code: string, sekolah: string): void {
-    this.send({ type: 'teacher:login', code, sekolah });
+    this.lastTeacherLogin = { code, sekolah };
+    this.send({ type: 'teacher:login', code, sekolah }, true);
+  }
+
+  clearTeacherSession(): void {
+    this.lastTeacherLogin = null;
   }
 
   configureMission(payload: {
@@ -253,7 +369,7 @@ export class RealtimeClient {
     questionDurationSec: number;
     gameDurationMin: number;
   }): void {
-    this.send({ type: 'teacher:configure_mission', ...payload });
+    this.send({ type: 'teacher:configure_mission', ...payload }, true);
   }
 
   startMission(payload: {
@@ -262,7 +378,15 @@ export class RealtimeClient {
     questionDurationSec: number;
     gameDurationMin: number;
   }): void {
-    this.send({ type: 'teacher:start_mission', ...payload });
+    this.send({ type: 'teacher:start_mission', ...payload }, true);
+  }
+
+  approveStudent(participantId: string): void {
+    this.send({ type: 'teacher:approve_student', participantId }, true);
+  }
+
+  approveAllStudents(): void {
+    this.send({ type: 'teacher:approve_all_students' }, true);
   }
 
   stopMission(): void {

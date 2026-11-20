@@ -1,8 +1,9 @@
 import type {
   AvatarConfig,
+  ChatMessage,
   DifficultyLevel,
   GameId,
-  QuestionItem,
+  ParticipantState,
   QuestionType,
   RoomSnapshot,
   TestimonialItem,
@@ -12,15 +13,16 @@ import {
   DEFAULT_AVATAR_MUSLIM,
   DEFAULT_AVATAR_MUSLIMAH,
   getMinigameMeta,
-  MINIGAMES,
 } from '../constants.ts';
 import { paiBank } from '../data/paiBank.ts';
 import { realtimeClient } from '../services/RealtimeClient.ts';
 import { QuizEngine } from '../game/QuizEngine.ts';
 import { soundFX } from '../audio/SoundFX.ts';
 import type { PaiWorldScript } from '../scene/PaiWorldScript.ts';
+import { ChatSidebar } from './ChatSidebar.ts';
 
 type StudentScreen = 'login' | 'avatar' | 'schoolyard' | 'playing';
+type GameSidebarTab = 'quiz' | 'chat';
 
 export class StudentUI {
   private container: HTMLElement;
@@ -40,16 +42,19 @@ export class StudentUI {
   private kelas = '5';
   private sekolah = '';
   private avatar: AvatarConfig = { ...DEFAULT_AVATAR_MUSLIM };
+  private isReady = false;
 
-  // Interactive modals & states
+  // Interactive modals & sidebar states
   private openMaterialElementId: string | null = null;
-  private showSoloPicker = false;
-  private isSoloMode = false;
-  private soloEndsAt: number | null = null;
   private showBuffModal = false;
   private showReflectionModal = false;
   private reflectionSubmitted = false;
   private showMiniLeaderboard = false;
+  private schoolyardChatOpen = window.innerWidth >= 900;
+  private gameSidebarTab: GameSidebarTab = 'quiz';
+  private unreadChatCount = 0;
+
+  private chatSidebar: ChatSidebar;
 
   // Active quiz UI state
   private selectedIndices: number[] = [];
@@ -59,6 +64,7 @@ export class StudentUI {
   private lastDiceNumber = 0;
 
   private tickInterval: ReturnType<typeof setInterval> | null = null;
+  private onResizeBound = () => this.syncCameraCentering();
 
   constructor(
     container: HTMLElement,
@@ -72,6 +78,13 @@ export class StudentUI {
     this.onTeacherLoggedIn = onTeacherLoggedIn;
     this.onToggleXR = onToggleXR;
     this.onToast = onToast;
+
+    this.chatSidebar = new ChatSidebar({
+      role: 'student',
+      selfId: null,
+      senderName: 'Peserta',
+      onToast: this.onToast,
+    });
 
     // Bind 3D World click callbacks
     this.world.callbacks = {
@@ -109,9 +122,9 @@ export class StudentUI {
           this.onToast(`Memindai Artefak #${idx + 1}! Jawab kuis di kiri untuk membuka lencana orbit.`);
         }
       },
-      onPlayerMoveSync: (pos) => {
+      onPlayerMoveSync: (pos, rotY) => {
         if (this.studentId) {
-          realtimeClient.sendMove(this.studentId, pos);
+          realtimeClient.sendMove(this.studentId, pos, rotY);
         }
       },
     };
@@ -121,14 +134,13 @@ export class StudentUI {
     this.snapshot = snapshot;
     if (snapshot) {
       paiBank.setCustomContent(snapshot.customElements, snapshot.customQuestions);
-      this.world.setElements(paiBank.getAllElements());
-    } else {
-      this.world.setElements(paiBank.getAllElements());
     }
+    this.world.setElements(paiBank.getAllElements());
     this.screen = 'login';
     this.world.setViewMode('title');
     this.render();
     this.startTimerLoop();
+    window.addEventListener('resize', this.onResizeBound);
   }
 
   unmount(): void {
@@ -136,7 +148,15 @@ export class StudentUI {
       clearInterval(this.tickInterval);
       this.tickInterval = null;
     }
+    window.removeEventListener('resize', this.onResizeBound);
+    this.chatSidebar.unmount();
+    this.world.setViewportMargins({ left: 0, right: 0, top: 0, bottom: 0 });
     this.container.innerHTML = '';
+  }
+
+  private getSelfParticipant(snap: RoomSnapshot | null = this.snapshot): ParticipantState | undefined {
+    if (!snap || !this.studentId) return undefined;
+    return snap.participants.find((p) => p.id === this.studentId);
   }
 
   handleSnapshot(snapshot: RoomSnapshot): void {
@@ -145,39 +165,121 @@ export class StudentUI {
     this.world.setElements(paiBank.getAllElements());
     this.world.syncPeers(snapshot.participants, this.studentId);
 
-    // Only re-render when needed without interrupting active inputs
-    if (this.screen === 'schoolyard' || this.showMiniLeaderboard || this.showBuffModal) {
+    const self = this.getSelfParticipant(snapshot);
+    if (self) {
+      this.isReady = self.isReady;
+    }
+
+    // If teacher returned room to lobby while student was in game / reflection
+    if (snapshot.mission.status === 'lobby' && this.screen === 'playing' && !this.showReflectionModal) {
+      this.screen = 'schoolyard';
+      this.world.setViewMode('schoolyard');
+      this.world.syncPeers(snapshot.participants, this.studentId);
+      this.onToast('Guru mengembalikan ruang kelas ke Halaman Sekolah.');
+      this.render();
+      return;
+    }
+
+    // Always update mounted chat sidebar surgically without losing input focus
+    this.chatSidebar.updateMessages(snapshot);
+
+    if (this.screen === 'schoolyard') {
+      this.updateSchoolyardLiveRegions(snapshot);
+    } else if (this.showMiniLeaderboard || this.showBuffModal) {
       this.render();
     } else if (this.screen === 'login') {
       this.updateMarqueeOnly(snapshot.testimonials);
+    } else if (this.screen === 'playing') {
+      const rankEl = this.container.querySelector<HTMLElement>('#hud-my-rank');
+      if (rankEl && self) {
+        rankEl.textContent = `#${self.rank}`;
+      }
     }
   }
 
   handleJoined(id: string, snapshot: RoomSnapshot): void {
     this.studentId = id;
     this.snapshot = snapshot;
+    this.chatSidebar.setOptions({ selfId: id, senderName: this.nama || 'Peserta' });
     this.world.syncPeers(snapshot.participants, this.studentId);
-    if (snapshot.mission.status === 'playing' && this.screen === 'schoolyard') {
-      this.beginMissionGame(false);
+
+    // Sync current screen's activity cleanly
+    if (this.screen === 'schoolyard') {
+      this.updateSchoolyardLiveRegions(snapshot);
+      this.chatSidebar.updateMessages(snapshot);
+    }
+
+    const self = this.getSelfParticipant(snapshot);
+    if (snapshot.mission.status === 'playing' && self?.approvedForMission && this.screen !== 'playing') {
+      this.beginMissionGame();
     }
   }
 
   handleMissionStarted(snapshot: RoomSnapshot): void {
     this.snapshot = snapshot;
-    if (this.screen === 'schoolyard' || this.screen === 'avatar' || this.screen === 'playing') {
-      this.beginMissionGame(false);
+    const self = this.getSelfParticipant(snapshot);
+    // Strict admin-approval gate: only enter gameplay when approved by teacher
+    if (
+      self?.approvedForMission &&
+      (this.screen === 'schoolyard' || this.screen === 'avatar' || this.screen === 'playing')
+    ) {
+      this.beginMissionGame();
+    } else if (this.screen === 'schoolyard') {
+      this.updateSchoolyardLiveRegions(snapshot);
+      this.onToast('Misi telah dimulai oleh Guru! Menunggu persetujuan Guru untuk bergabung.');
+    }
+  }
+
+  handleStudentApproved(participantId: string, snapshot: RoomSnapshot): void {
+    this.snapshot = snapshot;
+    if (participantId === this.studentId && snapshot.mission.status === 'playing') {
+      this.onToast('Guru telah menyetujui kamu masuk ke arena misi!');
+      this.beginMissionGame();
+    } else if (this.screen === 'schoolyard') {
+      this.updateSchoolyardLiveRegions(snapshot);
     }
   }
 
   handleMissionEnded(snapshot: RoomSnapshot): void {
     this.snapshot = snapshot;
-    if (this.screen === 'playing' && !this.isSoloMode) {
+    if (this.screen === 'playing') {
       soundFX.playLevelUp();
       this.showBuffModal = false;
       this.showReflectionModal = true;
       this.reflectionSubmitted = false;
       this.render();
+    } else if (this.screen === 'schoolyard') {
+      this.updateSchoolyardLiveRegions(snapshot);
     }
+  }
+
+  handleChatMessage(message: ChatMessage, snapshot: RoomSnapshot): void {
+    this.snapshot = snapshot;
+    this.chatSidebar.updateMessages(snapshot);
+
+    // Show floating 3D speech bubble in Schoolyard above the speaking student's avatar
+    if (this.screen === 'schoolyard' && message.senderRole === 'student') {
+      this.world.showAvatarChatBubble(message.senderId, this.studentId, message.text);
+    }
+
+    const isFromOther = message.senderId !== this.studentId;
+    if (isFromOther) {
+      const chatVisible =
+        (this.screen === 'schoolyard' && this.schoolyardChatOpen) ||
+        (this.screen === 'playing' && this.gameSidebarTab === 'chat');
+      if (!chatVisible && (this.screen === 'schoolyard' || this.screen === 'playing')) {
+        this.unreadChatCount += 1;
+        this.updateUnreadBadges();
+        if (message.senderRole === 'teacher') {
+          this.onToast(`Pesan Guru: ${message.text.slice(0, 72)}`);
+        }
+      }
+    }
+  }
+
+  handleChatRejected(reason: string): void {
+    soundFX.playWrong();
+    this.onToast(reason);
   }
 
   handleBuffAttacked(payload: {
@@ -196,23 +298,40 @@ export class StudentUI {
     }
   }
 
+  private updateUnreadBadges(): void {
+    const syBadge = this.container.querySelector<HTMLElement>('#sy-chat-badge');
+    if (syBadge) {
+      if (this.unreadChatCount > 0) {
+        syBadge.textContent = String(this.unreadChatCount);
+        syBadge.classList.remove('hidden');
+      } else {
+        syBadge.classList.add('hidden');
+      }
+    }
+    const gameBadge = this.container.querySelector<HTMLElement>('#game-chat-badge');
+    if (gameBadge) {
+      if (this.unreadChatCount > 0) {
+        gameBadge.textContent = String(this.unreadChatCount);
+        gameBadge.classList.remove('hidden');
+      } else {
+        gameBadge.classList.add('hidden');
+      }
+    }
+  }
+
   private startTimerLoop(): void {
     if (this.tickInterval) clearInterval(this.tickInterval);
     this.tickInterval = setInterval(() => {
       if (this.screen !== 'playing' || this.showReflectionModal || this.showBuffModal) return;
 
-      // Update game timer
-      const endsAt = this.isSoloMode ? this.soloEndsAt : this.snapshot?.mission.endsAt ?? null;
+      // Update game timer from teacher-controlled mission
+      const endsAt = this.snapshot?.mission.endsAt ?? null;
       const gTimerEl = this.container.querySelector<HTMLElement>('#hud-game-timer');
       if (endsAt && gTimerEl) {
         const remSec = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
         const mm = String(Math.floor(remSec / 60)).padStart(2, '0');
         const ss = String(remSec % 60).padStart(2, '0');
         gTimerEl.textContent = `${mm}:${ss}`;
-        if (remSec === 0 && this.isSoloMode) {
-          this.finishSoloSession();
-          return;
-        }
       }
 
       // Update per-question countdown bar
@@ -234,9 +353,7 @@ export class StudentUI {
     }, 150);
   }
 
-  private beginMissionGame(solo: boolean, soloGameId?: GameId): void {
-    this.isSoloMode = solo;
-    this.showSoloPicker = false;
+  private beginMissionGame(): void {
     this.openMaterialElementId = null;
     this.showBuffModal = false;
     this.showReflectionModal = false;
@@ -244,19 +361,15 @@ export class StudentUI {
     this.lastFeedback = null;
     this.selectedIndices = [];
     this.awaitingNext = false;
+    this.gameSidebarTab = 'quiz';
 
     const mission = this.snapshot?.mission;
-    const gameId: GameId = solo ? soloGameId ?? 'puncak_nalar' : mission?.gameId ?? 'puncak_nalar';
+    const gameId: GameId = mission?.gameId ?? 'puncak_nalar';
     const elementIds =
       mission?.elementIds && mission.elementIds.length > 0
         ? mission.elementIds
         : paiBank.getAllElements().map((e) => e.id);
     const qDur = mission?.questionDurationSec ?? 25;
-    const gDurMin = mission?.gameDurationMin ?? 10;
-
-    if (solo) {
-      this.soloEndsAt = Date.now() + gDurMin * 60_000;
-    }
 
     this.quiz.reset({ gameId, elementIds, questionDurationSec: qDur });
     this.screen = 'playing';
@@ -279,13 +392,6 @@ export class StudentUI {
     this.render();
   }
 
-  private finishSoloSession(): void {
-    soundFX.playLevelUp();
-    this.showReflectionModal = true;
-    this.reflectionSubmitted = false;
-    this.render();
-  }
-
   private loadNextQuestion(preferredType?: QuestionType): void {
     const q = this.quiz.nextQuestion(preferredType);
     this.selectedIndices = [];
@@ -301,12 +407,13 @@ export class StudentUI {
     this.lastDiceNumber = rolled;
     this.world.rollDiceVisual(rolled);
 
-    // Tile colors cycle: 0=Blue(PG), 1=Purple(PGK), 2=Yellow(BS)
     const nextTileMod = (this.quiz.progressValue + rolled) % 3;
     const qType: QuestionType = nextTileMod === 0 ? 'PG' : nextTileMod === 1 ? 'PGK' : 'BS';
     this.waitingForDiceRoll = false;
     this.loadNextQuestion(qType);
-    this.onToast(`Dadu keluar angka ${rolled}! Tantangan petak: ${qType === 'PG' ? 'Biru (PG)' : qType === 'PGK' ? 'Ungu (PGK Bonus)' : 'Kuning (Benar/Salah)'}`);
+    this.onToast(
+      `Dadu keluar angka ${rolled}! Tantangan petak: ${qType === 'PG' ? 'Biru (PG)' : qType === 'PGK' ? 'Ungu (PGK Bonus)' : 'Kuning (Benar/Salah)'}`
+    );
     this.render();
   }
 
@@ -371,7 +478,6 @@ export class StudentUI {
       chosenSingleIdx ?? this.selectedIndices[0]
     );
 
-    // Sync to server if joined
     if (this.studentId) {
       realtimeClient.syncProgress({
         id: this.studentId,
@@ -391,7 +497,6 @@ export class StudentUI {
 
     this.render();
 
-    // Advance after brief feedback pause
     setTimeout(() => {
       if (this.screen !== 'playing' || this.showReflectionModal) return;
       if (result.triggeredBuffChoice) {
@@ -416,7 +521,60 @@ export class StudentUI {
     this.render();
   }
 
+  /**
+   * Keeps the 3D scene centered precisely inside the remaining unobstructed viewport area
+   * across Login, Avatar Studio, Schoolyard, and Active Minigame screens.
+   */
+  private syncCameraCentering(): void {
+    requestAnimationFrame(() => {
+      if (this.screen === 'login') {
+        this.world.setViewportMargins({ left: 0, right: 0, top: 0, bottom: 0 });
+        return;
+      }
+
+      if (this.screen === 'avatar') {
+        const aside = this.container.querySelector<HTMLElement>('#avatar-right-aside');
+        if (aside && window.innerWidth >= 768) {
+          const rect = aside.getBoundingClientRect();
+          this.world.setViewportMargins({ left: 0, right: rect.width, top: 24, bottom: 24 });
+        } else {
+          this.world.setViewportMargins({ left: 0, right: 0, top: 48, bottom: Math.round(window.innerHeight * 0.45) });
+        }
+        return;
+      }
+
+      if (this.screen === 'schoolyard') {
+        const rightSidebar = this.container.querySelector<HTMLElement>('#sy-right-sidebar');
+        const topBar = this.container.querySelector<HTMLElement>('#sy-topbar');
+        const bottomDock = this.container.querySelector<HTMLElement>('#sy-bottom-dock');
+        const rightW =
+          this.schoolyardChatOpen && rightSidebar && window.innerWidth >= 820
+            ? rightSidebar.getBoundingClientRect().width
+            : 0;
+        const topH = topBar ? topBar.getBoundingClientRect().height : 56;
+        const bottomH = bottomDock ? Math.min(110, bottomDock.getBoundingClientRect().height) : 76;
+        this.world.setViewportMargins({ left: 0, right: rightW, top: topH, bottom: bottomH });
+        return;
+      }
+
+      if (this.screen === 'playing') {
+        const topBar = this.container.querySelector<HTMLElement>('.game-topbar');
+        const leftPanel = this.container.querySelector<HTMLElement>('.game-left-panel');
+        const topH = topBar ? topBar.getBoundingClientRect().height : 60;
+        if (window.innerWidth > 820) {
+          const leftW = leftPanel ? leftPanel.getBoundingClientRect().width : 280;
+          this.world.setViewportMargins({ left: leftW, right: 0, top: topH, bottom: 0 });
+        } else {
+          const bottomH = leftPanel ? leftPanel.getBoundingClientRect().height : 240;
+          this.world.setViewportMargins({ left: 0, right: 0, top: topH, bottom: bottomH });
+        }
+      }
+    });
+  }
+
   private render(): void {
+    this.chatSidebar.unmount();
+
     if (this.screen === 'login') {
       this.renderLoginScreen();
     } else if (this.screen === 'avatar') {
@@ -426,6 +584,8 @@ export class StudentUI {
     } else {
       this.renderPlayingHUD();
     }
+
+    this.syncCameraCentering();
   }
 
   // =====================================================================
@@ -462,7 +622,7 @@ export class StudentUI {
             <div class="text-center mb-4">
               <h1 class="font-display font-bold text-2xl text-white">Selamat Datang di Sekolah 3D!</h1>
               <p class="text-xs text-slate-300 mt-1">
-                5 Elemen PAI · 150 Soal AKM · 9 Mini-Game Petualangan
+                5 Elemen PAI · 150 Soal AKM · Dipandu Langsung oleh Guru
               </p>
             </div>
 
@@ -501,7 +661,10 @@ export class StudentUI {
                         <input name="sekolah" required class="input-dark" placeholder="Contoh: SDN 01 Beji" value="${this.esc(this.sekolah)}" />
                       </div>
                     </div>
-                    <button type="submit" class="btn-primary w-full py-3 text-base mt-2">
+                    <p class="text-[11px] text-slate-400 leading-snug">
+                      Setelah masuk, kehadiranmu langsung terpantau Guru. Permainan dimulai bersama sesuai persetujuan Guru.
+                    </p>
+                    <button type="submit" class="btn-primary w-full py-3 text-base mt-1">
                       Masuk & Buat Avatar Roblox
                     </button>
                   </form>`
@@ -560,7 +723,6 @@ export class StudentUI {
       </div>`
       )
       .join('');
-    // Duplicate for seamless continuous scrolling
     return `<div class="marquee-track">${cards}${cards}</div>`;
   }
 
@@ -600,6 +762,18 @@ export class StudentUI {
       if (!this.nama || !this.sekolah) return;
 
       this.world.setPlayerIdentity(this.nama, this.kelas, this.avatar);
+      this.chatSidebar.setOptions({ senderName: this.nama, selfId: this.studentId });
+
+      // Register immediately with the server so the teacher monitors EVERY player using the link
+      realtimeClient.joinStudent({
+        id: this.studentId ?? undefined,
+        nama: this.nama,
+        kelas: this.kelas,
+        sekolah: this.sekolah,
+        avatar: this.avatar,
+        activity: 'avatar',
+      });
+
       this.screen = 'avatar';
       this.world.setViewMode('avatar_studio');
       this.render();
@@ -614,7 +788,6 @@ export class StudentUI {
       const sekolah = String(fd.get('sekolah') || '').trim();
       this.sekolah = sekolah;
 
-      // Local fast validation + server auth
       if (code.toLowerCase() !== 'gpaibeji' || sekolah.length < 2) {
         const err = this.container.querySelector('#teacher-login-err');
         if (err) {
@@ -625,16 +798,15 @@ export class StudentUI {
         return;
       }
 
-      if (realtimeClient.connected) {
-        realtimeClient.loginTeacher(code, sekolah);
-      } else {
+      realtimeClient.loginTeacher(code, sekolah);
+      if (!realtimeClient.connected) {
         this.onTeacherLoggedIn(sekolah, this.snapshot);
       }
     });
   }
 
   // =====================================================================
-  // 2. AVATAR CUSTOMIZER STUDIO (Rambut/Peci/Hijab, Mata, Hidung, Mulut, Baju, Celana, Sepatu, Tas)
+  // 2. AVATAR CUSTOMIZER STUDIO
   // =====================================================================
   private renderAvatarStudio(): void {
     const a = this.avatar;
@@ -642,7 +814,7 @@ export class StudentUI {
       <div class="fixed inset-0 grid grid-cols-1 md:grid-cols-12 pointer-events-none">
         <!-- Left 3D Turntable Viewport -->
         <div class="md:col-span-6 lg:col-span-7 flex flex-col justify-between p-4">
-          <div class="pointer-events-auto flex items-center justify-between">
+          <div class="pointer-events-auto flex items-center justify-between gap-2">
             <div class="px-4 py-2 rounded-2xl bg-[#0f172a]/92 border border-sky-400/40">
               <div class="font-display font-bold text-lg text-amber-300">Studio Avatar Roblox PAI</div>
               <div class="text-xs text-slate-300">${this.esc(this.nama)} · Kelas ${this.esc(this.kelas)} · ${this.esc(this.sekolah)}</div>
@@ -650,7 +822,7 @@ export class StudentUI {
             <button id="btn-back-login" class="btn-secondary text-xs">Kembali</button>
           </div>
 
-          <div class="pointer-events-auto flex items-center justify-center gap-3 mb-2">
+          <div class="pointer-events-auto flex flex-wrap items-center justify-center gap-2 mb-2">
             <button id="btn-rot-left" class="btn-secondary text-xs">⟲ Putar Kiri</button>
             <button id="btn-preset-muslim" class="btn-secondary text-xs text-sky-300">Preset Santri Muslim</button>
             <button id="btn-preset-muslimah" class="btn-secondary text-xs text-pink-300">Preset Santri Muslimah</button>
@@ -659,7 +831,7 @@ export class StudentUI {
         </div>
 
         <!-- Right Customization Panel -->
-        <aside class="md:col-span-6 lg:col-span-5 interactive-layer bg-[#0f172a]/96 border-l border-slate-700 p-4 flex flex-col overflow-hidden max-h-screen">
+        <aside id="avatar-right-aside" class="md:col-span-6 lg:col-span-5 interactive-layer bg-[#0f172a]/96 border-l border-slate-700 p-4 flex flex-col overflow-hidden max-h-screen">
           <div class="flex-1 overflow-y-auto space-y-4 pr-1 text-xs">
             <!-- Skin Color -->
             <div>
@@ -819,7 +991,7 @@ export class StudentUI {
 
           <div class="pt-3 mt-3 border-t border-slate-700 shrink-0">
             <button id="btn-enter-schoolyard" class="btn-gold w-full py-3 text-base">
-              Simpan Avatar & Masuk Halaman Sekolah
+              Simpan Avatar & Berkumpul di Halaman Sekolah
             </button>
           </div>
         </aside>
@@ -884,95 +1056,219 @@ export class StudentUI {
     this.container.querySelector('#btn-enter-schoolyard')?.addEventListener('click', () => {
       soundFX.playLevelUp();
       this.world.setPlayerIdentity(this.nama, this.kelas, this.avatar);
-      realtimeClient.joinStudent({
-        id: this.studentId ?? undefined,
-        nama: this.nama,
-        kelas: this.kelas,
-        sekolah: this.sekolah,
-        avatar: this.avatar,
-      });
+      if (this.studentId) {
+        realtimeClient.updateAvatar(this.studentId, this.avatar, 'schoolyard');
+      } else {
+        realtimeClient.joinStudent({
+          nama: this.nama,
+          kelas: this.kelas,
+          sekolah: this.sekolah,
+          avatar: this.avatar,
+          activity: 'schoolyard',
+        });
+      }
       this.screen = 'schoolyard';
       this.world.setViewMode('schoolyard');
       if (this.snapshot) {
         this.world.syncPeers(this.snapshot.participants, this.studentId);
       }
       this.render();
-      this.onToast('Selamat datang di Halaman Sekolah! Klik Kios 3D di depan untuk mempelajari materi PAI.');
+      this.onToast('Selamat datang di Halaman Sekolah! Berkumpul bersama teman & tunggu persetujuan Guru untuk memulai misi.');
     });
   }
 
   // =====================================================================
-  // 3. SCHOOLYARD LOBBY HUD + PENGUASAAN MATERI MODAL + SOLO PRACTICE PICKER
+  // 3. SCHOOLYARD GATHERING ARENA + SIDEBAR CHAT + PENGUASAAN MATERI
   // =====================================================================
   private renderSchoolyardHUD(): void {
-    const mission = this.snapshot?.mission;
-    const gameMeta = getMinigameMeta(mission?.gameId ?? 'puncak_nalar');
-    const onlineCount = (this.snapshot?.participants ?? []).filter((p) => p.connected).length;
+    const participants = this.snapshot?.participants ?? [];
+    const onlinePeers = participants.filter((p) => p.connected);
 
     this.container.innerHTML = `
-      <div class="fixed inset-0 flex flex-col justify-between p-3 md:p-4 pointer-events-none">
-        <!-- Top Bar -->
-        <div class="flex flex-wrap items-center justify-between gap-2 pointer-events-auto">
-          <div class="px-3.5 py-2 rounded-2xl bg-[#0f172a]/92 border border-amber-400/45 flex items-center gap-3">
-            <div>
-              <div class="font-display font-bold text-sm md:text-base text-white">${this.esc(this.nama)} <span class="text-xs text-sky-300 font-normal">· Kls ${this.esc(this.kelas)}</span></div>
-              <div class="text-[11px] text-slate-300">${this.esc(this.sekolah)} · ${onlineCount} Peserta Online</div>
+      <div class="fixed inset-0 flex pointer-events-none">
+        <!-- Main Left/Center 3D Schoolyard Overlay -->
+        <div class="flex-1 min-w-0 flex flex-col justify-between p-3 md:p-4">
+          <!-- Top Bar -->
+          <div id="sy-topbar" class="flex flex-wrap items-center justify-between gap-2 pointer-events-auto">
+            <div class="px-3.5 py-2 rounded-2xl bg-[#0f172a]/92 border border-amber-400/45 flex items-center gap-3">
+              <div>
+                <div class="font-display font-bold text-sm md:text-base text-white">${this.esc(this.nama)} <span class="text-xs text-sky-300 font-normal">· Kls ${this.esc(this.kelas)}</span></div>
+                <div id="sy-online-summary" class="text-[11px] text-slate-300">${this.esc(this.sekolah)} · ${onlinePeers.length} Peserta di Halaman Sekolah</div>
+              </div>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-1.5">
+              <button id="btn-open-materi" class="btn-primary text-xs py-2 px-3">Penguasaan Materi PAI</button>
+              <button id="btn-edit-avatar" class="btn-secondary text-xs py-2 px-3">Ubah Avatar</button>
+              <button id="btn-toggle-sy-chat" class="btn-secondary text-xs py-2 px-3 relative">
+                ${this.schoolyardChatOpen ? 'Tutup Chat' : 'Chat & Teman'}
+                <span id="sy-chat-badge" class="${this.unreadChatCount > 0 && !this.schoolyardChatOpen ? '' : 'hidden'} ml-1 px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-bold text-[10px]">${this.unreadChatCount}</span>
+              </button>
+              <button id="btn-sy-mute" class="btn-secondary text-xs py-2 px-2.5">${soundFX.muted ? '🔇' : '🔊'}</button>
+              <button id="btn-sy-xr" class="btn-secondary text-xs py-2 px-2.5 text-sky-300">XR</button>
+              <button id="btn-sy-logout" class="btn-secondary text-xs py-2 px-2.5 text-rose-300">Keluar</button>
             </div>
           </div>
 
-          <div class="flex flex-wrap items-center gap-2">
-            <button id="btn-open-materi" class="btn-primary text-xs">Penguasaan Materi PAI</button>
-            <button id="btn-edit-avatar" class="btn-secondary text-xs">Ubah Avatar</button>
-            <button id="btn-sy-mute" class="btn-secondary text-xs">${soundFX.muted ? 'Audio: Mati' : 'Audio: Aktif'}</button>
-            <button id="btn-sy-xr" class="btn-secondary text-xs text-sky-300">Mode XR</button>
-            <button id="btn-sy-logout" class="btn-secondary text-xs text-rose-300">Keluar</button>
-          </div>
-        </div>
-
-        <!-- Bottom Mission Waiting Dock + Mobile D-Pad -->
-        <div class="flex items-end justify-between gap-3">
-          <!-- Compact Touch Move Pad -->
-          <div class="pointer-events-auto grid grid-cols-3 gap-1 w-28 bg-[#0f172a]/85 p-1.5 rounded-2xl border border-slate-700">
-            <div></div>
-            <button data-dir="up" class="js-dpad h-8 rounded-lg bg-slate-800 text-white font-bold text-xs">▲</button>
-            <div></div>
-            <button data-dir="left" class="js-dpad h-8 rounded-lg bg-slate-800 text-white font-bold text-xs">◀</button>
-            <button id="btn-sy-jump" class="h-8 rounded-lg bg-emerald-600 text-white font-bold text-[10px]">LMP</button>
-            <button data-dir="right" class="js-dpad h-8 rounded-lg bg-slate-800 text-white font-bold text-xs">▶</button>
-            <div></div>
-            <button data-dir="down" class="js-dpad h-8 rounded-lg bg-slate-800 text-white font-bold text-xs">▼</button>
-            <div></div>
-          </div>
-
-          <!-- Mission Status Banner -->
-          <div class="pointer-events-auto flex-1 max-w-xl bg-[#0f172a]/94 border-2 border-amber-400/50 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div class="text-[11px] font-bold text-amber-300 uppercase">
-                ${mission?.status === 'playing' ? 'Misi Kelas Sedang Berlangsung!' : 'Halaman Sekolah · Menunggu Guru Memulai Misi'}
-              </div>
-              <div class="font-display font-bold text-sm md:text-base text-white">
-                Mini-Game: ${this.esc(gameMeta.name)} (${mission?.gameDurationMin ?? 10} mnt)
-              </div>
-              <div class="text-[11px] text-slate-300">
-                Jalan (WASD/Panah) & klik Kios 3D di halaman sekolah untuk membaca 5 Materi PAI!
-              </div>
+          <!-- Bottom Mission Waiting Dock + Mobile D-Pad -->
+          <div id="sy-bottom-dock" class="flex items-end justify-between gap-3">
+            <!-- Compact Touch Move Pad -->
+            <div class="pointer-events-auto grid grid-cols-3 gap-1 w-28 bg-[#0f172a]/85 p-1.5 rounded-2xl border border-slate-700 shrink-0">
+              <div></div>
+              <button data-dir="up" class="js-dpad h-8 rounded-lg bg-slate-800 text-white font-bold text-xs">▲</button>
+              <div></div>
+              <button data-dir="left" class="js-dpad h-8 rounded-lg bg-slate-800 text-white font-bold text-xs">◀</button>
+              <button id="btn-sy-jump" class="h-8 rounded-lg bg-emerald-600 text-white font-bold text-[10px]">LMP</button>
+              <button data-dir="right" class="js-dpad h-8 rounded-lg bg-slate-800 text-white font-bold text-xs">▶</button>
+              <div></div>
+              <button data-dir="down" class="js-dpad h-8 rounded-lg bg-slate-800 text-white font-bold text-xs">▼</button>
+              <div></div>
             </div>
-            <div class="flex items-center gap-2">
-              ${
-                mission?.status === 'playing'
-                  ? `<button id="btn-join-active-mission" class="btn-gold text-xs py-2.5">Gabung Misi Sekarang</button>`
-                  : `<button id="btn-open-solo" class="btn-gold text-xs py-2.5">Latihan Mandiri (9 Game)</button>`
-              }
+
+            <!-- Teacher-Gated Mission Status Banner (NO Solo Mode) -->
+            <div id="sy-mission-banner" class="pointer-events-auto flex-1 max-w-xl bg-[#0f172a]/94 border-2 border-amber-400/50 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+              ${this.buildSchoolyardMissionBannerHtml()}
             </div>
           </div>
         </div>
+
+        <!-- Right Collapsible Schoolyard Sidebar: Online Classmates + Moderated Safe Chat -->
+        ${
+          this.schoolyardChatOpen
+            ? `<aside id="sy-right-sidebar" class="interactive-layer w-80 max-w-[88vw] h-full bg-[#0f172a]/96 border-l border-slate-700 flex flex-col shrink-0 shadow-2xl">
+                <!-- Classmates Gathered in Arena -->
+                <div class="px-3 py-2.5 border-b border-slate-700/80 shrink-0 bg-slate-900/60">
+                  <div class="flex items-center justify-between mb-1.5">
+                    <span class="font-display font-bold text-xs text-amber-300">Berkumpul di Halaman Sekolah</span>
+                    <span id="sy-peer-count" class="text-[11px] font-bold text-emerald-400 tabular-nums">${onlinePeers.length} Online</span>
+                  </div>
+                  <div id="sy-peer-chips" class="flex flex-wrap gap-1.5 max-h-20 overflow-y-auto">
+                    ${this.buildSchoolyardPeerChipsHtml(onlinePeers)}
+                  </div>
+                </div>
+
+                <!-- Moderated Live Chat Slot -->
+                <div id="sy-chat-mount" class="flex-1 min-h-0"></div>
+              </aside>`
+            : ''
+        }
       </div>
 
       ${this.openMaterialElementId ? this.renderMaterialModal(this.openMaterialElementId) : ''}
-      ${this.showSoloPicker ? this.renderSoloPickerModal() : ''}
     `;
 
+    // Mount ChatSidebar if open
+    const chatMount = this.container.querySelector<HTMLElement>('#sy-chat-mount');
+    if (chatMount) {
+      this.unreadChatCount = 0;
+      this.chatSidebar.setOptions({
+        role: 'student',
+        selfId: this.studentId,
+        senderName: this.nama || 'Peserta',
+      });
+      this.chatSidebar.mount(chatMount, this.snapshot);
+    }
+
     this.bindSchoolyardEvents();
+  }
+
+  private buildSchoolyardPeerChipsHtml(onlinePeers: ParticipantState[]): string {
+    if (onlinePeers.length === 0) {
+      return `<span class="text-[11px] text-slate-400">Menunggu teman sekelas bergabung...</span>`;
+    }
+    return onlinePeers
+      .map((p) => {
+        const isMe = p.id === this.studentId;
+        const badge = p.isReady
+          ? `<span class="text-[9px] px-1 rounded bg-emerald-500 text-slate-950 font-bold">Siap</span>`
+          : p.activity === 'avatar'
+            ? `<span class="text-[9px] px-1 rounded bg-sky-900 text-sky-200">Avatar</span>`
+            : '';
+        return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] border ${
+          isMe
+            ? 'bg-emerald-950/70 border-emerald-400/50 text-emerald-200 font-bold'
+            : 'bg-slate-800/90 border-slate-700 text-slate-200'
+        }">${this.esc(p.nama)} ${badge}</span>`;
+      })
+      .join('');
+  }
+
+  private buildSchoolyardMissionBannerHtml(): string {
+    const mission = this.snapshot?.mission;
+    const gameMeta = getMinigameMeta(mission?.gameId ?? 'puncak_nalar');
+    const self = this.getSelfParticipant();
+    const isPlaying = mission?.status === 'playing';
+    const awaitingApproval = isPlaying && !self?.approvedForMission;
+
+    return `
+      <div class="min-w-0 flex-1">
+        <div class="text-[11px] font-bold uppercase ${awaitingApproval ? 'text-sky-300' : 'text-amber-300'}">
+          ${
+            awaitingApproval
+              ? 'Misi Sedang Berjalan · Menunggu Persetujuan Guru (Admin)'
+              : 'Halaman Sekolah · Menunggu Guru Memulai Misi'
+          }
+        </div>
+        <div class="font-display font-bold text-sm md:text-base text-white truncate">
+          Mini-Game: ${this.esc(gameMeta.name)} (${mission?.gameDurationMin ?? 10} mnt)
+        </div>
+        <div class="text-[11px] text-slate-300">
+          ${
+            awaitingApproval
+              ? 'Guru akan menyetujui masuknya kamu dari Dashboard Admin. Sambil menunggu, baca materi PAI di Kios 3D!'
+              : 'Jalan (WASD/Panah) untuk bertemu teman & klik Kios 3D untuk belajar 5 Materi PAI.'
+          }
+        </div>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <button id="btn-toggle-ready" class="text-xs py-2.5 px-3.5 rounded-xl font-bold cursor-pointer transition ${
+          this.isReady
+            ? 'bg-emerald-500 text-slate-950 hover:bg-emerald-400'
+            : 'btn-gold'
+        }">
+          ${this.isReady ? '✓ Siap Ikut Misi' : 'Tandai Siap Misi'}
+        </button>
+      </div>
+    `;
+  }
+
+  private updateSchoolyardLiveRegions(snapshot: RoomSnapshot): void {
+    const onlinePeers = snapshot.participants.filter((p) => p.connected);
+    const summaryEl = this.container.querySelector<HTMLElement>('#sy-online-summary');
+    if (summaryEl) {
+      summaryEl.textContent = `${this.sekolah} · ${onlinePeers.length} Peserta di Halaman Sekolah`;
+    }
+    const peerCountEl = this.container.querySelector<HTMLElement>('#sy-peer-count');
+    if (peerCountEl) {
+      peerCountEl.textContent = `${onlinePeers.length} Online`;
+    }
+    const peerChipsEl = this.container.querySelector<HTMLElement>('#sy-peer-chips');
+    if (peerChipsEl) {
+      peerChipsEl.innerHTML = this.buildSchoolyardPeerChipsHtml(onlinePeers);
+    }
+    const bannerEl = this.container.querySelector<HTMLElement>('#sy-mission-banner');
+    if (bannerEl) {
+      bannerEl.innerHTML = this.buildSchoolyardMissionBannerHtml();
+      this.bindReadyButton();
+    }
+  }
+
+  private bindReadyButton(): void {
+    this.container.querySelector('#btn-toggle-ready')?.addEventListener('click', () => {
+      soundFX.playClick();
+      this.isReady = !this.isReady;
+      if (this.studentId) {
+        realtimeClient.setReady(this.studentId, this.isReady);
+      }
+      this.onToast(
+        this.isReady
+          ? 'Status Siap dikirim ke Guru! Tunggu aba-aba mulai dari Guru.'
+          : 'Status Siap dibatalkan.'
+      );
+      if (this.snapshot) {
+        this.updateSchoolyardLiveRegions(this.snapshot);
+      }
+    });
   }
 
   private renderMaterialModal(activeId: string): string {
@@ -1071,35 +1367,6 @@ export class StudentUI {
     `;
   }
 
-  private renderSoloPickerModal(): string {
-    return `
-      <div class="modal-backdrop">
-        <div class="modal-card max-w-3xl">
-          <div class="flex items-center justify-between pb-3 border-b border-slate-700 mb-4">
-            <div>
-              <h2 class="font-display font-bold text-xl text-amber-300">Pilih Mini-Game Latihan Mandiri</h2>
-              <p class="text-xs text-slate-300">Uji pemahaman 5 Elemen PAI sebelum misi kelas dimulai oleh Guru!</p>
-            </div>
-            <button id="btn-close-solo" class="btn-secondary text-xs">Tutup ✕</button>
-          </div>
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            ${MINIGAMES.map(
-              (g) => `
-              <button data-solo-game="${g.id}" class="js-solo-launch text-left p-3.5 rounded-xl bg-slate-900 border-2 border-slate-700 hover:border-amber-400 cursor-pointer transition">
-                <div class="flex items-center justify-between mb-1">
-                  <span class="text-[11px] font-bold px-2 py-0.5 rounded text-slate-950" style="background:${g.accent}">#${g.number}</span>
-                  <span class="text-[10px] text-slate-400">${this.esc(g.badge)}</span>
-                </div>
-                <div class="font-display font-bold text-sm text-white">${this.esc(g.name)}</div>
-                <div class="text-[11px] text-slate-300 mt-1">${this.esc(g.subtitle)}</div>
-              </button>`
-            ).join('')}
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
   private bindSchoolyardEvents(): void {
     this.container.querySelector('#btn-open-materi')?.addEventListener('click', () => {
       soundFX.playClick();
@@ -1119,8 +1386,18 @@ export class StudentUI {
       });
     });
 
+    this.container.querySelector('#btn-toggle-sy-chat')?.addEventListener('click', () => {
+      soundFX.playClick();
+      this.schoolyardChatOpen = !this.schoolyardChatOpen;
+      if (this.schoolyardChatOpen) this.unreadChatCount = 0;
+      this.render();
+    });
+
     this.container.querySelector('#btn-edit-avatar')?.addEventListener('click', () => {
       soundFX.playClick();
+      if (this.studentId) {
+        realtimeClient.updateActivity(this.studentId, 'avatar');
+      }
       this.screen = 'avatar';
       this.world.setViewMode('avatar_studio');
       this.render();
@@ -1135,29 +1412,13 @@ export class StudentUI {
     });
     this.container.querySelector('#btn-sy-logout')?.addEventListener('click', () => {
       soundFX.playClick();
+      realtimeClient.clearStudentSession();
       this.screen = 'login';
       this.world.setViewMode('title');
       this.render();
     });
 
-    this.container.querySelector('#btn-open-solo')?.addEventListener('click', () => {
-      soundFX.playClick();
-      this.showSoloPicker = true;
-      this.render();
-    });
-    this.container.querySelector('#btn-close-solo')?.addEventListener('click', () => {
-      soundFX.playClick();
-      this.showSoloPicker = false;
-      this.render();
-    });
-    this.container.querySelectorAll<HTMLButtonElement>('.js-solo-launch').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        this.beginMissionGame(true, btn.dataset.soloGame as GameId);
-      });
-    });
-    this.container.querySelector('#btn-join-active-mission')?.addEventListener('click', () => {
-      this.beginMissionGame(false);
-    });
+    this.bindReadyButton();
 
     // D-pad touch movement
     this.container.querySelectorAll<HTMLButtonElement>('.js-dpad').forEach((btn) => {
@@ -1181,15 +1442,14 @@ export class StudentUI {
   }
 
   // =====================================================================
-  // 4. ACTIVE GAME HUD (10% TOP BAR + 20% LEFT QUIZ PANEL + 80% 3D VIEWPORT)
+  // 4. ACTIVE GAME HUD (TOP BAR + LEFT QUIZ/CHAT SIDEBAR + CENTERED 3D VIEWPORT)
   // =====================================================================
   private renderPlayingHUD(): void {
     const gameMeta = getMinigameMeta(this.quiz.gameId);
     const q = this.quiz.currentQuestion;
     const elInfo = q ? paiBank.getElementById(q.elementId) : null;
     const participants = this.snapshot?.participants ?? [];
-    const myRank =
-      participants.find((p) => p.id === this.studentId)?.rank ?? 1;
+    const myRank = participants.find((p) => p.id === this.studentId)?.rank ?? 1;
 
     const buffLabel =
       this.quiz.activeBuff === 'double_risk'
@@ -1224,7 +1484,7 @@ export class StudentUI {
               Skor: <strong class="text-amber-300 tabular-nums text-sm">${this.quiz.score}</strong>
             </div>
             <div class="px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700">
-              Peringkat: <strong class="text-sky-300 tabular-nums">#${myRank}</strong>
+              Peringkat: <strong id="hud-my-rank" class="text-sky-300 tabular-nums">#${myRank}</strong>
             </div>
             <div class="px-2.5 py-1 rounded-lg font-bold uppercase ${levelColor}">
               ${this.quiz.level}
@@ -1243,115 +1503,127 @@ export class StudentUI {
           <div class="flex items-center gap-1.5 shrink-0">
             <button id="btn-toggle-lb" class="btn-secondary text-[11px] py-1.5 px-2.5">Klasemen</button>
             <button id="btn-game-mute" class="btn-secondary text-[11px] py-1.5 px-2.5">${soundFX.muted ? '🔇' : '🔊'}</button>
-            ${
-              this.isSoloMode
-                ? `<button id="btn-finish-solo" class="px-2.5 py-1.5 rounded-lg bg-rose-600 text-white font-bold text-[11px] cursor-pointer">Selesai</button>`
-                : ''
-            }
           </div>
         </header>
 
-        <!-- LEFT PANEL (20%): QUESTION & CONTROLS -->
+        <!-- LEFT SIDEBAR: SOAL AKM & CHAT KELAS TABS -->
         <aside class="game-left-panel">
+          <div class="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-slate-900 border border-slate-700/80 shrink-0">
+            <button id="tab-game-quiz" class="py-1.5 rounded-lg text-xs font-bold cursor-pointer transition ${
+              this.gameSidebarTab === 'quiz'
+                ? 'bg-sky-500 text-slate-950'
+                : 'text-slate-300 hover:text-white'
+            }">Soal AKM</button>
+            <button id="tab-game-chat" class="py-1.5 rounded-lg text-xs font-bold cursor-pointer transition flex items-center justify-center gap-1 ${
+              this.gameSidebarTab === 'chat'
+                ? 'bg-emerald-500 text-slate-950'
+                : 'text-slate-300 hover:text-white'
+            }">
+              <span>Chat Kelas</span>
+              <span id="game-chat-badge" class="${this.unreadChatCount > 0 && this.gameSidebarTab !== 'chat' ? '' : 'hidden'} px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-950 text-[10px] font-bold">${this.unreadChatCount}</span>
+            </button>
+          </div>
+
           ${
-            this.waitingForDiceRoll
-              ? `<div class="flex-1 flex flex-col items-center justify-center text-center gap-3 p-2">
-                  <div class="font-display font-bold text-lg text-amber-300">Giliran Lempar Dadu 3D!</div>
-                  <p class="text-xs text-slate-300">
-                    Klik dadu raksasa di arena 3D atau tekan tombol di bawah untuk melangkah & membuka tantangan soal.
-                  </p>
-                  <button id="btn-roll-dice-left" class="btn-gold w-full py-3 text-sm">
-                    Lempar Dadu 3D
-                  </button>
-                </div>`
-              : q
-                ? `
-                  <!-- Question Header & Countdown -->
-                  <div class="space-y-1.5">
-                    <div class="flex flex-wrap items-center justify-between gap-1">
-                      <span class="text-[10px] font-bold px-2 py-0.5 rounded text-slate-950" style="background:${elInfo?.color ?? '#10b981'}">
-                        ${this.esc(elInfo?.shortName ?? q.elementId)}
-                      </span>
-                      <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-900 text-indigo-200">
-                        ${q.type === 'PG' ? 'Pilihan Ganda' : q.type === 'PGK' ? 'PG Kompleks (Multi)' : 'Benar / Salah'}
-                      </span>
-                      <span id="q-timer-text" class="text-xs font-bold text-sky-300 tabular-nums">${this.quiz.questionDurationSec} dtk</span>
+            this.gameSidebarTab === 'chat'
+              ? `<div id="game-chat-mount" class="flex-1 min-h-0 -mx-3 -mb-3 border-t border-slate-800"></div>`
+              : this.waitingForDiceRoll
+                ? `<div class="flex-1 flex flex-col items-center justify-center text-center gap-3 p-2">
+                    <div class="font-display font-bold text-lg text-amber-300">Giliran Lempar Dadu 3D!</div>
+                    <p class="text-xs text-slate-300">
+                      Klik dadu raksasa di arena 3D atau tekan tombol di bawah untuk melangkah & membuka tantangan soal.
+                    </p>
+                    <button id="btn-roll-dice-left" class="btn-gold w-full py-3 text-sm">
+                      Lempar Dadu 3D
+                    </button>
+                  </div>`
+                : q
+                  ? `
+                    <!-- Question Header & Countdown -->
+                    <div class="space-y-1.5 shrink-0">
+                      <div class="flex flex-wrap items-center justify-between gap-1">
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded text-slate-950" style="background:${elInfo?.color ?? '#10b981'}">
+                          ${this.esc(elInfo?.shortName ?? q.elementId)}
+                        </span>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-900 text-indigo-200">
+                          ${q.type === 'PG' ? 'Pilihan Ganda' : q.type === 'PGK' ? 'PG Kompleks (Multi)' : 'Benar / Salah'}
+                        </span>
+                        <span id="q-timer-text" class="text-xs font-bold text-sky-300 tabular-nums">${this.quiz.questionDurationSec} dtk</span>
+                      </div>
+                      <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+                        <div id="q-timer-bar" class="h-full bg-sky-400 transition-all duration-150" style="width:100%"></div>
+                      </div>
+                      <div class="text-[10px] text-slate-400">Kognitif: ${this.esc(q.cognitiveLevel)}</div>
                     </div>
-                    <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
-                      <div id="q-timer-bar" class="h-full bg-sky-400 transition-all duration-150" style="width:100%"></div>
+
+                    <!-- Prompt -->
+                    <div class="p-3 rounded-xl bg-slate-900 border border-slate-700 text-xs md:text-sm text-white leading-relaxed shrink-0 ${
+                      this.hasArabic(q.prompt) ? 'font-arabic' : ''
+                    }">
+                      ${this.esc(q.prompt)}
                     </div>
-                    <div class="text-[10px] text-slate-400">Kognitif: ${this.esc(q.cognitiveLevel)}</div>
-                  </div>
 
-                  <!-- Prompt -->
-                  <div class="p-3 rounded-xl bg-slate-900 border border-slate-700 text-xs md:text-sm text-white leading-relaxed ${
-                    this.hasArabic(q.prompt) ? 'font-arabic' : ''
-                  }">
-                    ${this.esc(q.prompt)}
-                  </div>
-
-                  <!-- Options -->
-                  <div class="space-y-2 flex-1">
-                    ${q.options
-                      .map((opt, idx) => {
-                        const isSel = this.selectedIndices.includes(idx);
-                        let stateCls = isSel ? 'selected' : '';
-                        if (this.awaitingNext) {
-                          if (q.correctIndices.includes(idx)) stateCls = 'correct';
-                          else if (isSel) stateCls = 'wrong';
-                        }
-                        const badge =
-                          q.type === 'BS'
-                            ? idx === 0
-                              ? 'B'
-                              : 'S'
-                            : ['A', 'B', 'C', 'D'][idx];
-                        return `
-                        <button data-opt="${idx}" class="js-opt-btn option-btn ${stateCls} ${
-                          this.hasArabic(opt) ? 'font-arabic' : ''
-                        }" ${this.awaitingNext ? 'disabled' : ''}>
-                          <span class="w-6 h-6 rounded-lg shrink-0 flex items-center justify-center font-display font-bold text-xs ${
+                    <!-- Options -->
+                    <div class="space-y-2 flex-1 overflow-y-auto pr-0.5">
+                      ${q.options
+                        .map((opt, idx) => {
+                          const isSel = this.selectedIndices.includes(idx);
+                          let stateCls = isSel ? 'selected' : '';
+                          if (this.awaitingNext) {
+                            if (q.correctIndices.includes(idx)) stateCls = 'correct';
+                            else if (isSel) stateCls = 'wrong';
+                          }
+                          const badge =
                             q.type === 'BS'
                               ? idx === 0
-                                ? 'bg-emerald-600 text-white'
-                                : 'bg-rose-600 text-white'
-                              : isSel
-                                ? 'bg-amber-400 text-slate-950'
-                                : 'bg-slate-800 text-sky-300'
-                          }">${q.type === 'PGK' ? (isSel ? '✓' : '☐') : badge}</span>
-                          <span>${this.esc(opt)}</span>
-                        </button>`;
-                      })
-                      .join('')}
-                  </div>
+                                ? 'B'
+                                : 'S'
+                              : ['A', 'B', 'C', 'D'][idx];
+                          return `
+                          <button data-opt="${idx}" class="js-opt-btn option-btn ${stateCls} ${
+                            this.hasArabic(opt) ? 'font-arabic' : ''
+                          }" ${this.awaitingNext ? 'disabled' : ''}>
+                            <span class="w-6 h-6 rounded-lg shrink-0 flex items-center justify-center font-display font-bold text-xs ${
+                              q.type === 'BS'
+                                ? idx === 0
+                                  ? 'bg-emerald-600 text-white'
+                                  : 'bg-rose-600 text-white'
+                                : isSel
+                                  ? 'bg-amber-400 text-slate-950'
+                                  : 'bg-slate-800 text-sky-300'
+                            }">${q.type === 'PGK' ? (isSel ? '✓' : '☐') : badge}</span>
+                            <span>${this.esc(opt)}</span>
+                          </button>`;
+                        })
+                        .join('')}
+                    </div>
 
-                  ${
-                    q.type === 'PGK' && !this.awaitingNext
-                      ? `<button id="btn-submit-pgk" class="btn-gold w-full py-2.5 text-sm" ${
-                          this.selectedIndices.length === 0 ? 'disabled style="opacity:0.5"' : ''
-                        }>Kirim Jawaban PGK (${this.selectedIndices.length} dipilih)</button>`
-                      : ''
-                  }
+                    ${
+                      q.type === 'PGK' && !this.awaitingNext
+                        ? `<button id="btn-submit-pgk" class="btn-gold w-full py-2.5 text-sm shrink-0" ${
+                            this.selectedIndices.length === 0 ? 'disabled style="opacity:0.5"' : ''
+                          }>Kirim Jawaban PGK (${this.selectedIndices.length} dipilih)</button>`
+                        : ''
+                    }
 
-                  ${
-                    this.lastFeedback
-                      ? `<div class="p-2.5 rounded-xl text-xs font-semibold border ${
-                          this.lastFeedback.isCorrect
-                            ? 'bg-emerald-950/90 border-emerald-400 text-emerald-200'
-                            : 'bg-rose-950/90 border-rose-400 text-rose-200'
-                        }">
-                          ${this.esc(this.lastFeedback.text)}
-                        </div>`
-                      : ''
-                  }
-                `
-                : ''
+                    ${
+                      this.lastFeedback
+                        ? `<div class="p-2.5 rounded-xl text-xs font-semibold border shrink-0 ${
+                            this.lastFeedback.isCorrect
+                              ? 'bg-emerald-950/90 border-emerald-400 text-emerald-200'
+                              : 'bg-rose-950/90 border-rose-400 text-rose-200'
+                          }">
+                            ${this.esc(this.lastFeedback.text)}
+                          </div>`
+                        : ''
+                    }
+                  `
+                  : ''
           }
         </aside>
 
-        <!-- RIGHT 80% 3D VIEWPORT FLOATING CONTROLS -->
+        <!-- RIGHT CENTERED 3D VIEWPORT FLOATING CONTROLS -->
         <div class="game-viewport-overlay">
-          <!-- Minigame Progress Pill Top-Right -->
           <div class="absolute top-3 right-3 pointer-events-auto flex flex-col items-end gap-2">
             <div class="px-3.5 py-2 rounded-xl bg-[#0f172a]/90 border border-slate-600 text-xs text-right">
               <div class="text-[10px] text-slate-400">${this.esc(gameMeta.leaderboardMetric)}</div>
@@ -1363,7 +1635,6 @@ export class StudentUI {
             ${this.renderMinigameSpecialControls()}
           </div>
 
-          <!-- Controls Hint Bottom-Left of 3D Viewport -->
           <div class="hidden md:block absolute bottom-3 left-3 px-3 py-1.5 rounded-xl bg-[#0f172a]/85 border border-slate-700 text-[11px] text-slate-300">
             ${this.esc(gameMeta.controlsHint)}
           </div>
@@ -1374,6 +1645,18 @@ export class StudentUI {
       ${this.showBuffModal ? this.renderBuffChoiceModal(participants) : ''}
       ${this.showReflectionModal ? this.renderReflectionModal(myRank) : ''}
     `;
+
+    // Mount ChatSidebar if Chat tab is active
+    const gameChatMount = this.container.querySelector<HTMLElement>('#game-chat-mount');
+    if (gameChatMount) {
+      this.unreadChatCount = 0;
+      this.chatSidebar.setOptions({
+        role: 'student',
+        selfId: this.studentId,
+        senderName: this.nama || 'Peserta',
+      });
+      this.chatSidebar.mount(gameChatMount, this.snapshot);
+    }
 
     this.bindPlayingEvents();
   }
@@ -1436,7 +1719,7 @@ export class StudentUI {
           <div class="space-y-2 max-h-[60vh] overflow-y-auto">
             ${
               participants.length === 0
-                ? `<p class="text-xs text-slate-400 text-center py-6">Mode latihan mandiri — skor kamu: ${this.quiz.score}</p>`
+                ? `<p class="text-xs text-slate-400 text-center py-6">Menunggu data skor kelas...</p>`
                 : participants
                     .map(
                       (p, i) => `
@@ -1462,7 +1745,7 @@ export class StudentUI {
   }
 
   private renderBuffChoiceModal(participants: RoomSnapshot['participants']): string {
-    const others = participants.filter((p) => p.id !== this.studentId && p.connected);
+    const others = participants.filter((p) => p.id !== this.studentId && p.connected && p.approvedForMission);
     return `
       <div class="modal-backdrop">
         <div class="modal-card max-w-2xl">
@@ -1580,6 +1863,18 @@ export class StudentUI {
   }
 
   private bindPlayingEvents(): void {
+    this.container.querySelector('#tab-game-quiz')?.addEventListener('click', () => {
+      soundFX.playClick();
+      this.gameSidebarTab = 'quiz';
+      this.render();
+    });
+    this.container.querySelector('#tab-game-chat')?.addEventListener('click', () => {
+      soundFX.playClick();
+      this.gameSidebarTab = 'chat';
+      this.unreadChatCount = 0;
+      this.render();
+    });
+
     this.container.querySelector('#btn-toggle-lb')?.addEventListener('click', () => {
       soundFX.playClick();
       this.showMiniLeaderboard = !this.showMiniLeaderboard;
@@ -1593,9 +1888,6 @@ export class StudentUI {
     this.container.querySelector('#btn-game-mute')?.addEventListener('click', () => {
       soundFX.toggleMute();
       this.render();
-    });
-    this.container.querySelector('#btn-finish-solo')?.addEventListener('click', () => {
-      this.finishSoloSession();
     });
 
     this.container.querySelector('#btn-roll-dice-left')?.addEventListener('click', () => {
@@ -1668,7 +1960,7 @@ export class StudentUI {
       if (!refleksi || !komentar || !kritikSaran) return;
 
       realtimeClient.submitReflection({
-        id: this.studentId ?? `solo_${Date.now()}`,
+        id: this.studentId ?? `stu_${Date.now()}`,
         nama: this.nama,
         kelas: this.kelas,
         sekolah: this.sekolah,
@@ -1686,12 +1978,19 @@ export class StudentUI {
       soundFX.playClick();
       this.showReflectionModal = false;
       this.screen = 'schoolyard';
+      if (this.studentId) {
+        realtimeClient.updateActivity(this.studentId, 'schoolyard');
+      }
       this.world.setViewMode('schoolyard');
+      if (this.snapshot) {
+        this.world.syncPeers(this.snapshot.participants, this.studentId);
+      }
       this.render();
     });
     this.container.querySelector('#btn-ref-login')?.addEventListener('click', () => {
       soundFX.playClick();
       this.showReflectionModal = false;
+      realtimeClient.clearStudentSession();
       this.screen = 'login';
       this.world.setViewMode('title');
       this.render();

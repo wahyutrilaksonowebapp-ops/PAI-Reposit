@@ -101,6 +101,20 @@ export interface AnswerLogEntry {
   timestamp: number;
 }
 
+export type ParticipantActivity = 'avatar' | 'schoolyard' | 'playing' | 'finished';
+
+export interface ChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderRole: 'teacher' | 'student';
+  senderKelas?: string;
+  text: string;
+  createdAt: number;
+  pinned?: boolean;
+  deleted?: boolean;
+}
+
 export interface ParticipantState {
   id: string;
   nama: string;
@@ -119,6 +133,10 @@ export interface ParticipantState {
   progressValue: number; // Tier / Bridge / Gate / Buildings / Stars / Tile / Artifacts / Basecamp
   progressLabel: string;
   pos: { x: number; y: number; z: number };
+  rotY: number;
+  activity: ParticipantActivity;
+  isReady: boolean;
+  approvedForMission: boolean;
   connected: boolean;
   finishedReflection: boolean;
   answeredLog: AnswerLogEntry[];
@@ -168,5 +186,8 @@ export interface RoomSnapshot {
   testimonials: TestimonialItem[];
   customElements: PaiElement[];
   customQuestions: QuestionItem[];
+  chatMessages: ChatMessage[];
+  chatMutedAll: boolean;
+  mutedParticipantIds: string[];
   serverTime: number;
 }

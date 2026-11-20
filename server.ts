@@ -6,9 +6,11 @@ import { WebSocketServer, WebSocket } from 'ws';
 import * as XLSX from 'xlsx';
 import type {
   AvatarConfig,
+  ChatMessage,
   GameId,
   MissionConfig,
   PaiElement,
+  ParticipantActivity,
   ParticipantState,
   QuestionItem,
   RoomSnapshot,
@@ -93,7 +95,93 @@ const mission: MissionConfig = {
 
 const participants = new Map<string, ParticipantState>();
 const socketToParticipantId = new Map<WebSocket, string>();
+const teacherSockets = new Set<WebSocket>();
 let missionEndTimer: ReturnType<typeof setTimeout> | null = null;
+
+// === MODERATED SAFE-FOR-STUDENTS CHAT STATE ===
+const chatMessages: ChatMessage[] = [];
+let chatMutedAll = false;
+const mutedParticipantIds = new Set<string>();
+const lastChatSentAt = new Map<string, number>();
+
+const BLOCKED_WORDS = [
+  'anjing',
+  'anjir',
+  'bangsat',
+  'bajingan',
+  'bego',
+  'bodoh',
+  'tolol',
+  'goblok',
+  'kampret',
+  'kontol',
+  'memek',
+  'ngentot',
+  'asu',
+  'jancok',
+  'jancuk',
+  'kimak',
+  'puki',
+  'pantek',
+  'setan',
+  'brengsek',
+  'sialan',
+  'tai',
+  'babi',
+  'monyet',
+  'fuck',
+  'shit',
+  'bitch',
+  'asshole',
+  'bastard',
+  'damn',
+  'stupid',
+  'idiot',
+];
+
+const BLOCKED_WORD_REGEX = new RegExp(
+  `\\b(${BLOCKED_WORDS.join('|')})\\b`,
+  'i'
+);
+const URL_REGEX = /(https?:\/\/|www\.|\.[a-z]{2,}\/)/i;
+
+function validateStudentMessage(
+  senderId: string,
+  rawText: string
+): { ok: true; text: string } | { ok: false; reason: string } {
+  const cleaned = rawText.replace(/\s+/g, ' ').trim();
+  if (!cleaned) {
+    return { ok: false, reason: 'Pesan tidak boleh kosong.' };
+  }
+  if (cleaned.length > 180) {
+    return { ok: false, reason: 'Pesan maksimal 180 karakter.' };
+  }
+  if (chatMutedAll) {
+    return { ok: false, reason: 'Chat kelas sedang dibisukan sementara oleh Guru.' };
+  }
+  if (mutedParticipantIds.has(senderId)) {
+    return { ok: false, reason: 'Akun chat kamu sedang dibisukan oleh Guru.' };
+  }
+
+  const now = Date.now();
+  const prev = lastChatSentAt.get(senderId) ?? 0;
+  if (now - prev < 1500) {
+    return { ok: false, reason: 'Tunggu sebentar sebelum mengirim pesan berikutnya.' };
+  }
+
+  if (URL_REGEX.test(cleaned)) {
+    return { ok: false, reason: 'Demi keamanan siswa, pengiriman tautan/link tidak diperbolehkan.' };
+  }
+  if (BLOCKED_WORD_REGEX.test(cleaned)) {
+    return {
+      ok: false,
+      reason: 'Pesan ditahan oleh filter sopan santun. Gunakan bahasa yang baik dan santun ya!',
+    };
+  }
+
+  lastChatSentAt.set(senderId, now);
+  return { ok: true, text: cleaned };
+}
 
 function computeRanks(): ParticipantState[] {
   const list = Array.from(participants.values());
@@ -115,6 +203,9 @@ function getSnapshot(): RoomSnapshot {
     testimonials: persisted.testimonials.slice(-60),
     customElements: persisted.customElements,
     customQuestions: persisted.customQuestions,
+    chatMessages: chatMessages.filter((m) => !m.deleted).slice(-80),
+    chatMutedAll,
+    mutedParticipantIds: Array.from(mutedParticipantIds),
     serverTime: Date.now(),
   };
 }
@@ -149,6 +240,11 @@ function stopMission(reason: 'teacher' | 'timeout'): void {
   mission.active = false;
   mission.status = 'finished';
   mission.endsAt = Date.now();
+  for (const p of participants.values()) {
+    if (p.activity === 'playing') {
+      p.activity = 'finished';
+    }
+  }
   broadcast({ type: 'mission:ended', reason, snapshot: getSnapshot() });
 }
 
@@ -163,7 +259,6 @@ async function startServer(): Promise<void> {
   app.get('/api/export-excel', (_req, res) => {
     const ranked = computeRanks();
 
-    // Sheet 1: Rekap Peserta
     const pesertaRows = ranked.map((p) => {
       const total = p.correctCount + p.wrongCount;
       const accuracy = total > 0 ? Math.round((p.correctCount / total) * 100) : 0;
@@ -183,7 +278,6 @@ async function startServer(): Promise<void> {
       };
     });
 
-    // Sheet 2: Analisis Butir Soal
     const questionStats = new Map<
       string,
       {
@@ -230,7 +324,6 @@ async function startServer(): Promise<void> {
       'Rata-rata Waktu (dtk)': s.total > 0 ? Number((s.totalTime / s.total).toFixed(1)) : 0,
     }));
 
-    // Sheet 3: Refleksi & Testimoni
     const testimoniRows = persisted.testimonials.map((t) => ({
       Waktu: new Date(t.createdAt).toLocaleString('id-ID'),
       'Nama Peserta': t.nama,
@@ -293,6 +386,9 @@ async function startServer(): Promise<void> {
         const kelas = String(msg.kelas || '5').trim().slice(0, 16);
         const sekolah = String(msg.sekolah || 'SDN Nusantara').trim().slice(0, 60);
         const avatar = msg.avatar as AvatarConfig;
+        const activity = (
+          typeof msg.activity === 'string' ? msg.activity : 'avatar'
+        ) as ParticipantActivity;
 
         const existing = participants.get(id);
         if (existing) {
@@ -300,10 +396,13 @@ async function startServer(): Promise<void> {
           existing.kelas = kelas;
           existing.sekolah = sekolah;
           if (avatar) existing.avatar = avatar;
+          existing.activity = activity;
           existing.connected = true;
         } else {
-          const angle = participants.size * 1.15;
-          const radius = 2.6 + (participants.size % 3) * 1.1;
+          // Spread spawn points neatly around the front courtyard near the flagpole
+          const idx = participants.size;
+          const angle = idx * 0.85 - 1.2;
+          const radius = 2.4 + (idx % 3) * 1.15;
           participants.set(id, {
             id,
             nama,
@@ -311,7 +410,7 @@ async function startServer(): Promise<void> {
             sekolah,
             avatar,
             score: 0,
-            rank: participants.size + 1,
+            rank: idx + 1,
             level: 'sedang',
             streak: 0,
             maxStreak: 0,
@@ -322,10 +421,14 @@ async function startServer(): Promise<void> {
             progressValue: 0,
             progressLabel: 'Siap',
             pos: {
-              x: Number((Math.cos(angle) * radius).toFixed(2)),
-              y: 0,
-              z: Number((Math.sin(angle) * radius + 2.5).toFixed(2)),
+              x: Number((Math.sin(angle) * radius).toFixed(2)),
+              y: 0.08,
+              z: Number((4.6 + Math.cos(angle) * 1.6).toFixed(2)),
             },
+            rotY: Math.PI,
+            activity,
+            isReady: false,
+            approvedForMission: false,
             connected: true,
             finishedReflection: false,
             answeredLog: [],
@@ -343,6 +446,29 @@ async function startServer(): Promise<void> {
         const p = participants.get(id);
         if (p && msg.avatar) {
           p.avatar = msg.avatar as AvatarConfig;
+          if (typeof msg.activity === 'string') {
+            p.activity = msg.activity as ParticipantActivity;
+          }
+          broadcastSnapshot();
+        }
+        return;
+      }
+
+      if (type === 'student:update_activity') {
+        const id = String(msg.id || socketToParticipantId.get(ws) || '');
+        const p = participants.get(id);
+        if (p && typeof msg.activity === 'string') {
+          p.activity = msg.activity as ParticipantActivity;
+          broadcastSnapshot();
+        }
+        return;
+      }
+
+      if (type === 'student:set_ready') {
+        const id = String(msg.id || socketToParticipantId.get(ws) || '');
+        const p = participants.get(id);
+        if (p) {
+          p.isReady = Boolean(msg.ready);
           broadcastSnapshot();
         }
         return;
@@ -352,9 +478,11 @@ async function startServer(): Promise<void> {
         const id = String(msg.id || socketToParticipantId.get(ws) || '');
         const p = participants.get(id);
         const pos = msg.pos as { x: number; y: number; z: number } | undefined;
+        const rotY = typeof msg.rotY === 'number' && Number.isFinite(msg.rotY) ? msg.rotY : p?.rotY ?? 0;
         if (p && pos && Number.isFinite(pos.x) && Number.isFinite(pos.z)) {
-          p.pos = { x: pos.x, y: pos.y || 0, z: pos.z };
-          broadcast({ type: 'player:moved', id, pos: p.pos }, ws);
+          p.pos = { x: pos.x, y: pos.y || 0.08, z: pos.z };
+          p.rotY = rotY;
+          broadcast({ type: 'player:moved', id, pos: p.pos, rotY: p.rotY }, ws);
         }
         return;
       }
@@ -362,7 +490,7 @@ async function startServer(): Promise<void> {
       if (type === 'student:sync_progress') {
         const id = String(msg.id || socketToParticipantId.get(ws) || '');
         const p = participants.get(id);
-        if (!p) return;
+        if (!p || !mission.active || !p.approvedForMission) return;
         if (typeof msg.score === 'number') p.score = Math.max(0, Math.round(msg.score));
         if (typeof msg.level === 'string') p.level = msg.level as DifficultyLevel;
         if (typeof msg.streak === 'number') p.streak = msg.streak;
@@ -386,7 +514,7 @@ async function startServer(): Promise<void> {
         const amount = Math.min(200, Math.max(50, Number(msg.amount) || 150));
         const attacker = participants.get(attackerId);
         const target = participants.get(targetId);
-        if (attacker && target && attacker.id !== target.id) {
+        if (attacker && target && attacker.id !== target.id && mission.active && attacker.approvedForMission) {
           target.score = Math.max(0, target.score - amount);
           broadcast({
             type: 'buff:attacked',
@@ -420,7 +548,10 @@ async function startServer(): Promise<void> {
           skor: p?.score ?? Number(msg.skor || 0),
           createdAt: Date.now(),
         };
-        if (p) p.finishedReflection = true;
+        if (p) {
+          p.finishedReflection = true;
+          p.activity = 'schoolyard';
+        }
         persisted.testimonials.push(item);
         saveDb(persisted);
         sendJson(ws, { type: 'reflection:saved', item });
@@ -428,10 +559,118 @@ async function startServer(): Promise<void> {
         return;
       }
 
+      // === MODERATED CHAT EVENTS ===
+      if (type === 'chat:send') {
+        const isTeacher = teacherSockets.has(ws) || msg.role === 'teacher';
+        const rawText = String(msg.text || '');
+
+        if (isTeacher) {
+          const cleaned = rawText.replace(/\s+/g, ' ').trim().slice(0, 260);
+          if (!cleaned) return;
+          const chatMsg: ChatMessage = {
+            id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            senderId: 'teacher_admin',
+            senderName: String(msg.senderName || 'Guru PAI').trim().slice(0, 40),
+            senderRole: 'teacher',
+            text: cleaned,
+            createdAt: Date.now(),
+            pinned: Boolean(msg.pin),
+          };
+          if (chatMsg.pinned) {
+            chatMessages.forEach((m) => {
+              m.pinned = false;
+            });
+          }
+          chatMessages.push(chatMsg);
+          if (chatMessages.length > 150) chatMessages.shift();
+          broadcast({ type: 'chat:message', message: chatMsg, snapshot: getSnapshot() });
+          return;
+        }
+
+        const senderId = String(msg.senderId || socketToParticipantId.get(ws) || '');
+        const p = participants.get(senderId);
+        if (!p) {
+          sendJson(ws, {
+            type: 'chat:rejected',
+            reason: 'Silakan masuk sebagai peserta terlebih dahulu untuk mengirim pesan.',
+          });
+          return;
+        }
+
+        const check = validateStudentMessage(senderId, rawText);
+        if (!check.ok) {
+          sendJson(ws, { type: 'chat:rejected', reason: check.reason });
+          return;
+        }
+
+        const chatMsg: ChatMessage = {
+          id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          senderId: p.id,
+          senderName: p.nama,
+          senderRole: 'student',
+          senderKelas: p.kelas,
+          text: check.text,
+          createdAt: Date.now(),
+        };
+        chatMessages.push(chatMsg);
+        if (chatMessages.length > 150) chatMessages.shift();
+        broadcast({ type: 'chat:message', message: chatMsg, snapshot: getSnapshot() });
+        return;
+      }
+
+      if (type === 'chat:delete') {
+        if (!teacherSockets.has(ws)) return;
+        const msgId = String(msg.messageId || '');
+        const found = chatMessages.find((m) => m.id === msgId);
+        if (found) {
+          found.deleted = true;
+          found.pinned = false;
+          broadcastSnapshot();
+        }
+        return;
+      }
+
+      if (type === 'chat:pin') {
+        if (!teacherSockets.has(ws)) return;
+        const msgId = String(msg.messageId || '');
+        const target = chatMessages.find((m) => m.id === msgId && !m.deleted);
+        if (target) {
+          const nextPinned = !target.pinned;
+          chatMessages.forEach((m) => {
+            m.pinned = false;
+          });
+          target.pinned = nextPinned;
+          broadcastSnapshot();
+        }
+        return;
+      }
+
+      if (type === 'chat:toggle_mute_all') {
+        if (!teacherSockets.has(ws)) return;
+        chatMutedAll = typeof msg.muted === 'boolean' ? msg.muted : !chatMutedAll;
+        broadcastSnapshot();
+        return;
+      }
+
+      if (type === 'chat:toggle_mute_student') {
+        if (!teacherSockets.has(ws)) return;
+        const pid = String(msg.participantId || '');
+        if (!pid) return;
+        if (mutedParticipantIds.has(pid)) {
+          mutedParticipantIds.delete(pid);
+        } else {
+          mutedParticipantIds.add(pid);
+        }
+        broadcastSnapshot();
+        return;
+      }
+
+      // === TEACHER ADMIN AUTH & MISSION APPROVAL ===
       if (type === 'teacher:login') {
         const code = String(msg.code || '').trim().toLowerCase();
         const sekolah = String(msg.sekolah || '').trim();
         if (code === ADMIN_CODE && sekolah.length >= 2) {
+          teacherSockets.add(ws);
           sendJson(ws, { type: 'teacher:auth', ok: true, sekolah, snapshot: getSnapshot() });
         } else {
           sendJson(ws, {
@@ -444,6 +683,7 @@ async function startServer(): Promise<void> {
       }
 
       if (type === 'teacher:configure_mission') {
+        if (!teacherSockets.has(ws)) return;
         if (Array.isArray(msg.elementIds) && msg.elementIds.length > 0) {
           mission.elementIds = msg.elementIds.map(String);
         }
@@ -461,6 +701,7 @@ async function startServer(): Promise<void> {
       }
 
       if (type === 'teacher:start_mission') {
+        if (!teacherSockets.has(ws)) return;
         if (missionEndTimer) {
           clearTimeout(missionEndTimer);
           missionEndTimer = null;
@@ -478,6 +719,7 @@ async function startServer(): Promise<void> {
           mission.gameDurationMin = Math.min(60, Math.max(1, Math.round(msg.gameDurationMin)));
         }
 
+        // Approve all currently connected participants to launch into the mission
         for (const p of participants.values()) {
           p.score = 0;
           p.level = 'sedang';
@@ -491,6 +733,10 @@ async function startServer(): Promise<void> {
           p.progressLabel = 'Mulai';
           p.finishedReflection = false;
           p.answeredLog = [];
+          p.approvedForMission = p.connected;
+          if (p.connected) {
+            p.activity = 'playing';
+          }
         }
 
         const now = Date.now();
@@ -507,12 +753,58 @@ async function startServer(): Promise<void> {
         return;
       }
 
+      if (type === 'teacher:approve_student') {
+        if (!teacherSockets.has(ws)) return;
+        const pid = String(msg.participantId || '');
+        const p = participants.get(pid);
+        if (p) {
+          p.approvedForMission = true;
+          if (mission.status === 'playing') {
+            p.activity = 'playing';
+            broadcast({
+              type: 'student:approved',
+              participantId: pid,
+              snapshot: getSnapshot(),
+            });
+          } else {
+            broadcastSnapshot();
+          }
+        }
+        return;
+      }
+
+      if (type === 'teacher:approve_all_students') {
+        if (!teacherSockets.has(ws)) return;
+        const approvedIds: string[] = [];
+        for (const p of participants.values()) {
+          if (p.connected && !p.approvedForMission) {
+            p.approvedForMission = true;
+            if (mission.status === 'playing') p.activity = 'playing';
+            approvedIds.push(p.id);
+          }
+        }
+        if (mission.status === 'playing' && approvedIds.length > 0) {
+          for (const pid of approvedIds) {
+            broadcast({
+              type: 'student:approved',
+              participantId: pid,
+              snapshot: getSnapshot(),
+            });
+          }
+        } else {
+          broadcastSnapshot();
+        }
+        return;
+      }
+
       if (type === 'teacher:stop_mission') {
+        if (!teacherSockets.has(ws)) return;
         stopMission('teacher');
         return;
       }
 
       if (type === 'teacher:return_lobby') {
+        if (!teacherSockets.has(ws)) return;
         if (missionEndTimer) {
           clearTimeout(missionEndTimer);
           missionEndTimer = null;
@@ -521,11 +813,16 @@ async function startServer(): Promise<void> {
         mission.status = 'lobby';
         mission.startedAt = null;
         mission.endsAt = null;
+        for (const p of participants.values()) {
+          p.approvedForMission = false;
+          if (p.connected) p.activity = 'schoolyard';
+        }
         broadcastSnapshot();
         return;
       }
 
       if (type === 'teacher:add_element') {
+        if (!teacherSockets.has(ws)) return;
         const el = msg.element as PaiElement | undefined;
         if (el && el.id && el.name && el.materialTitle) {
           persisted.customElements.push({ ...el, isCustom: true });
@@ -536,6 +833,7 @@ async function startServer(): Promise<void> {
       }
 
       if (type === 'teacher:add_question') {
+        if (!teacherSockets.has(ws)) return;
         const q = msg.question as QuestionItem | undefined;
         if (q && q.id && q.elementId && q.prompt && Array.isArray(q.options)) {
           persisted.customQuestions.push(q);
@@ -546,6 +844,7 @@ async function startServer(): Promise<void> {
       }
 
       if (type === 'teacher:reset_room') {
+        if (!teacherSockets.has(ws)) return;
         if (missionEndTimer) {
           clearTimeout(missionEndTimer);
           missionEndTimer = null;
@@ -557,6 +856,7 @@ async function startServer(): Promise<void> {
         for (const [pid, p] of participants.entries()) {
           if (!p.connected) {
             participants.delete(pid);
+            mutedParticipantIds.delete(pid);
           } else {
             p.score = 0;
             p.streak = 0;
@@ -565,6 +865,9 @@ async function startServer(): Promise<void> {
             p.progressValue = 0;
             p.answeredLog = [];
             p.finishedReflection = false;
+            p.approvedForMission = false;
+            p.isReady = false;
+            p.activity = 'schoolyard';
           }
         }
         broadcastSnapshot();
@@ -572,6 +875,7 @@ async function startServer(): Promise<void> {
     });
 
     ws.on('close', () => {
+      teacherSockets.delete(ws);
       const id = socketToParticipantId.get(ws);
       if (id) {
         socketToParticipantId.delete(ws);

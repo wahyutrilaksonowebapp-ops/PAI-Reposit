@@ -33,6 +33,9 @@ export class RobloxAvatar {
   private nameSprite: THREE.Sprite | null = null;
   private faceTexture: THREE.CanvasTexture | null = null;
   private nameTexture: THREE.CanvasTexture | null = null;
+  private chatSprite: THREE.Sprite | null = null;
+  private chatTexture: THREE.CanvasTexture | null = null;
+  private chatTimer = 0;
 
   public animState: AvatarAnimState = 'idle';
   private animClock = Math.random() * 10;
@@ -76,6 +79,76 @@ export class RobloxAvatar {
       (this.nameSprite.material as THREE.SpriteMaterial).map = this.nameTexture;
       (this.nameSprite.material as THREE.SpriteMaterial).needsUpdate = true;
     }
+  }
+
+  showChatBubble(text: string, durationSec = 5.5): void {
+    const trimmed = text.trim().slice(0, 64);
+    if (!trimmed) return;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 140;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Rounded bubble body
+      const padX = 20;
+      const padY = 14;
+      const w = canvas.width - padX * 2;
+      const h = 92;
+      const r = 24;
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.94)';
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.moveTo(padX + r, padY);
+      ctx.lineTo(padX + w - r, padY);
+      ctx.quadraticCurveTo(padX + w, padY, padX + w, padY + r);
+      ctx.lineTo(padX + w, padY + h - r);
+      ctx.quadraticCurveTo(padX + w, padY + h, padX + w - r, padY + h);
+      ctx.lineTo(canvas.width / 2 + 16, padY + h);
+      ctx.lineTo(canvas.width / 2, padY + h + 22);
+      ctx.lineTo(canvas.width / 2 - 16, padY + h);
+      ctx.lineTo(padX + r, padY + h);
+      ctx.quadraticCurveTo(padX, padY + h, padX, padY + h - r);
+      ctx.lineTo(padX, padY + r);
+      ctx.quadraticCurveTo(padX, padY, padX + r, padY);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = '700 28px "Plus Jakarta Sans", "Segoe UI", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const display = trimmed.length > 32 ? `${trimmed.slice(0, 31)}…` : trimmed;
+      ctx.fillText(display, canvas.width / 2, padY + h / 2);
+    }
+
+    if (this.chatTexture) this.chatTexture.dispose();
+    this.chatTexture = new THREE.CanvasTexture(canvas);
+    this.chatTexture.colorSpace = THREE.SRGBColorSpace;
+
+    if (!this.chatSprite) {
+      const mat = new THREE.SpriteMaterial({
+        map: this.chatTexture,
+        transparent: true,
+        depthTest: false,
+      });
+      this.chatSprite = new THREE.Sprite(mat);
+      this.chatSprite.scale.set(2.3, 0.64, 1);
+      this.chatSprite.position.set(0, 2.95, 0);
+      this.group.add(this.chatSprite);
+    } else {
+      const mat = this.chatSprite.material as THREE.SpriteMaterial;
+      mat.map = this.chatTexture;
+      mat.opacity = 1;
+      mat.needsUpdate = true;
+      this.chatSprite.visible = true;
+    }
+
+    this.chatTimer = durationSec;
   }
 
   applyConfig(cfg: AvatarConfig): void {
@@ -469,10 +542,19 @@ export class RobloxAvatar {
       this.bodyRig.position.y = Math.sin(t * 2.5) * 0.025;
       this.bodyRig.rotation.x = 0;
     }
+    if (this.chatSprite && this.chatTimer > 0) {
+      this.chatTimer -= dt;
+      if (this.chatTimer <= 0) {
+        this.chatSprite.visible = false;
+      } else if (this.chatTimer < 0.7) {
+        (this.chatSprite.material as THREE.SpriteMaterial).opacity = Math.max(0, this.chatTimer / 0.7);
+      }
+    }
   }
 
   dispose(): void {
     this.faceTexture?.dispose();
     this.nameTexture?.dispose();
+    this.chatTexture?.dispose();
   }
 }

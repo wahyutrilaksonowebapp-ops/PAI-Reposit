@@ -1,7 +1,9 @@
 import type {
+  ChatMessage,
   DifficultyLevel,
   GameId,
   PaiElement,
+  ParticipantState,
   QuestionItem,
   QuestionType,
   RoomSnapshot,
@@ -10,6 +12,7 @@ import { getMinigameMeta, MINIGAMES } from '../constants.ts';
 import { paiBank } from '../data/paiBank.ts';
 import { realtimeClient } from '../services/RealtimeClient.ts';
 import { soundFX } from '../audio/SoundFX.ts';
+import { ChatSidebar } from './ChatSidebar.ts';
 
 type TeacherTab = 'misi' | 'leaderboard' | 'materi' | 'soal' | 'laporan';
 
@@ -29,6 +32,12 @@ export class TeacherUI {
   private questionFilterElement = 'all';
   private timerInterval: ReturnType<typeof setInterval> | null = null;
 
+  // Persistent moderated chat sidebar state
+  private chatOpen = window.innerWidth >= 1024;
+  private unreadChatCount = 0;
+  private chatSidebar: ChatSidebar;
+  private mounted = false;
+
   constructor(
     container: HTMLElement,
     onLogout: () => void,
@@ -37,27 +46,44 @@ export class TeacherUI {
     this.container = container;
     this.onLogout = onLogout;
     this.onToast = onToast;
+
+    this.chatSidebar = new ChatSidebar({
+      role: 'teacher',
+      senderName: 'Guru PAI (Admin)',
+      onToast: this.onToast,
+    });
   }
 
   mount(sekolah: string, snapshot: RoomSnapshot | null): void {
     this.sekolah = sekolah;
+    this.mounted = true;
+    this.chatSidebar.setOptions({ senderName: `Guru PAI · ${sekolah}` });
     if (snapshot) {
-      this.applySnapshot(snapshot, false);
+      this.syncStateFromSnapshot(snapshot);
     }
-    this.render();
+    this.renderShell();
+    this.renderNav();
+    this.renderMainContent();
+    this.mountChatIfOpen();
+    this.updateHeaderCounters();
+    this.updateClockDisplay();
+
     if (this.timerInterval) clearInterval(this.timerInterval);
     this.timerInterval = setInterval(() => this.updateClockDisplay(), 500);
   }
 
   unmount(): void {
+    this.mounted = false;
     if (this.timerInterval) {
       clearInterval(this.timerInterval);
       this.timerInterval = null;
     }
+    this.chatSidebar.unmount();
+    realtimeClient.clearTeacherSession();
     this.container.innerHTML = '';
   }
 
-  applySnapshot(snapshot: RoomSnapshot, rerender = true): void {
+  private syncStateFromSnapshot(snapshot: RoomSnapshot): void {
     this.snapshot = snapshot;
     paiBank.setCustomContent(snapshot.customElements, snapshot.customQuestions);
     this.selectedGameId = snapshot.mission.gameId;
@@ -66,7 +92,60 @@ export class TeacherUI {
     if (snapshot.mission.elementIds.length > 0) {
       this.selectedElements = new Set(snapshot.mission.elementIds);
     }
-    if (rerender) this.render();
+  }
+
+  applySnapshot(snapshot: RoomSnapshot, rerender = true): void {
+    this.syncStateFromSnapshot(snapshot);
+    if (!this.mounted) return;
+
+    this.chatSidebar.updateMessages(snapshot);
+    this.updateHeaderCounters();
+    this.updateClockDisplay();
+
+    if (!rerender) return;
+
+    // Avoid interrupting text typing inside "Kelola Materi" or "Bank Soal" forms
+    const mainEl = this.container.querySelector('#teacher-main-content');
+    const active = document.activeElement;
+    const isTypingInMainForm =
+      Boolean(mainEl && active && mainEl.contains(active)) &&
+      (active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA' || active?.tagName === 'SELECT') &&
+      (this.activeTab === 'materi' || this.activeTab === 'soal');
+
+    this.renderNav();
+    if (!isTypingInMainForm) {
+      this.renderMainContent();
+    }
+  }
+
+  handleChatMessage(message: ChatMessage, snapshot: RoomSnapshot): void {
+    this.snapshot = snapshot;
+    if (!this.mounted) return;
+    this.chatSidebar.updateMessages(snapshot);
+    if (!this.chatOpen && message.senderRole === 'student') {
+      this.unreadChatCount += 1;
+      this.updateChatBadge();
+    }
+  }
+
+  private updateHeaderCounters(): void {
+    const participants = this.snapshot?.participants ?? [];
+    const onlineCount = participants.filter((p) => p.connected).length;
+    const onlineEl = this.container.querySelector<HTMLElement>('#teacher-online-count');
+    if (onlineEl) {
+      onlineEl.innerHTML = `Peserta Online: <span class="text-emerald-400 tabular-nums font-bold">${onlineCount}</span> / ${participants.length}`;
+    }
+  }
+
+  private updateChatBadge(): void {
+    const badge = this.container.querySelector<HTMLElement>('#teacher-chat-badge');
+    if (!badge) return;
+    if (this.unreadChatCount > 0 && !this.chatOpen) {
+      badge.textContent = String(this.unreadChatCount);
+      badge.classList.remove('hidden');
+    } else {
+      badge.classList.add('hidden');
+    }
   }
 
   private updateClockDisplay(): void {
@@ -85,13 +164,7 @@ export class TeacherUI {
     }
   }
 
-  private render(): void {
-    const snap = this.snapshot;
-    const participants = snap?.participants ?? [];
-    const onlineCount = participants.filter((p) => p.connected).length;
-    const mission = snap?.mission;
-    const gameMeta = getMinigameMeta(this.selectedGameId);
-
+  private renderShell(): void {
     this.container.innerHTML = `
       <div class="interactive-layer fixed inset-0 bg-[#0b1220] text-slate-100 flex flex-col overflow-hidden">
         <!-- Top Header -->
@@ -109,41 +182,115 @@ export class TeacherUI {
           </div>
 
           <div class="flex flex-wrap items-center gap-2">
-            <div class="px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-600 text-xs font-semibold">
-              Peserta Online: <span class="text-emerald-400 tabular-nums font-bold">${onlineCount}</span> / ${participants.length}
+            <div id="teacher-online-count" class="px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-600 text-xs font-semibold">
+              Peserta Online: <span class="text-emerald-400 tabular-nums font-bold">0</span> / 0
             </div>
             <div class="px-3 py-1.5 rounded-lg bg-slate-800 border border-amber-400/50 text-xs font-semibold">
               Status Misi: <span id="teacher-mission-clock" class="text-amber-300 tabular-nums font-bold">MENUNGGU</span>
             </div>
+            <button id="btn-toggle-teacher-chat" class="btn-secondary text-xs relative">
+              ${this.chatOpen ? 'Sembunyikan Chat' : 'Buka Chat Kelas'}
+              <span id="teacher-chat-badge" class="hidden ml-1 px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-bold text-[10px]">0</span>
+            </button>
             <button id="btn-copy-link" class="btn-secondary text-xs">Salin Link Kelas</button>
             <button id="btn-teacher-logout" class="btn-secondary text-xs text-rose-300">Keluar</button>
           </div>
         </header>
 
         <!-- Navigation Tabs -->
-        <nav class="bg-[#0f172a] border-b border-slate-800 px-4 py-2 flex gap-2 overflow-x-auto shrink-0">
-          ${this.tabBtn('misi', '1. Kontrol Misi & Peserta')}
-          ${this.tabBtn('leaderboard', `2. Leaderboard (${gameMeta.name})`)}
-          ${this.tabBtn('materi', '3. Kelola Materi & Elemen')}
-          ${this.tabBtn('soal', `4. Bank Soal (${paiBank.getAllQuestions().length})`)}
-          ${this.tabBtn('laporan', '5. Laporan & Excel (.xlsx)')}
-        </nav>
+        <nav id="teacher-nav" class="bg-[#0f172a] border-b border-slate-800 px-4 py-2 flex gap-2 overflow-x-auto shrink-0"></nav>
 
-        <!-- Body -->
-        <main class="flex-1 overflow-y-auto p-4 md:p-6">
-          <div class="max-w-7xl mx-auto">
-            ${this.activeTab === 'misi' ? this.renderMisiTab(mission, participants) : ''}
-            ${this.activeTab === 'leaderboard' ? this.renderLeaderboardTab(participants, gameMeta) : ''}
-            ${this.activeTab === 'materi' ? this.renderMateriTab() : ''}
-            ${this.activeTab === 'soal' ? this.renderSoalTab() : ''}
-            ${this.activeTab === 'laporan' ? this.renderLaporanTab(participants, snap?.testimonials ?? []) : ''}
-          </div>
-        </main>
+        <!-- Split Workspace: Main Content + Persistent Moderated Chat Sidebar -->
+        <div class="flex-1 min-h-0 flex overflow-hidden">
+          <main id="teacher-main-content" class="flex-1 min-w-0 overflow-y-auto p-4 md:p-6"></main>
+          <aside
+            id="teacher-chat-sidebar"
+            class="${this.chatOpen ? 'flex' : 'hidden'} w-80 lg:w-96 max-w-[90vw] border-l border-slate-700 bg-[#0f172a] shrink-0 flex-col min-h-0"
+          ></aside>
+        </div>
       </div>
     `;
 
-    this.bindEvents();
-    this.updateClockDisplay();
+    this.container.querySelector('#btn-copy-link')?.addEventListener('click', () => {
+      soundFX.playClick();
+      void navigator.clipboard?.writeText(window.location.href);
+      this.onToast('Link ruang kelas berhasil disalin! Semua pemain yang membuka link ini otomatis terpantau.');
+    });
+
+    this.container.querySelector('#btn-teacher-logout')?.addEventListener('click', () => {
+      soundFX.playClick();
+      this.onLogout();
+    });
+
+    this.container.querySelector('#btn-toggle-teacher-chat')?.addEventListener('click', () => {
+      soundFX.playClick();
+      this.chatOpen = !this.chatOpen;
+      const aside = this.container.querySelector<HTMLElement>('#teacher-chat-sidebar');
+      const btn = this.container.querySelector<HTMLButtonElement>('#btn-toggle-teacher-chat');
+      if (aside) {
+        aside.classList.toggle('hidden', !this.chatOpen);
+        aside.classList.toggle('flex', this.chatOpen);
+      }
+      if (btn) {
+        btn.innerHTML = `${this.chatOpen ? 'Sembunyikan Chat' : 'Buka Chat Kelas'} <span id="teacher-chat-badge" class="hidden ml-1 px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-bold text-[10px]">0</span>`;
+      }
+      if (this.chatOpen) {
+        this.unreadChatCount = 0;
+        this.mountChatIfOpen();
+      } else {
+        this.chatSidebar.unmount();
+      }
+      this.updateChatBadge();
+    });
+  }
+
+  private mountChatIfOpen(): void {
+    const aside = this.container.querySelector<HTMLElement>('#teacher-chat-sidebar');
+    if (this.chatOpen && aside) {
+      this.chatSidebar.mount(aside, this.snapshot);
+    }
+  }
+
+  private renderNav(): void {
+    const nav = this.container.querySelector<HTMLElement>('#teacher-nav');
+    if (!nav) return;
+    const gameMeta = getMinigameMeta(this.selectedGameId);
+    nav.innerHTML = `
+      ${this.tabBtn('misi', '1. Kontrol Misi & Peserta')}
+      ${this.tabBtn('leaderboard', `2. Leaderboard (${gameMeta.name})`)}
+      ${this.tabBtn('materi', '3. Kelola Materi & Elemen')}
+      ${this.tabBtn('soal', `4. Bank Soal (${paiBank.getAllQuestions().length})`)}
+      ${this.tabBtn('laporan', '5. Laporan & Excel (.xlsx)')}
+    `;
+    nav.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        soundFX.playClick();
+        this.activeTab = btn.dataset.tab as TeacherTab;
+        this.renderNav();
+        this.renderMainContent();
+      });
+    });
+  }
+
+  private renderMainContent(): void {
+    const main = this.container.querySelector<HTMLElement>('#teacher-main-content');
+    if (!main) return;
+    const snap = this.snapshot;
+    const participants = snap?.participants ?? [];
+    const mission = snap?.mission;
+    const gameMeta = getMinigameMeta(this.selectedGameId);
+
+    main.innerHTML = `
+      <div class="max-w-6xl mx-auto">
+        ${this.activeTab === 'misi' ? this.renderMisiTab(mission, participants) : ''}
+        ${this.activeTab === 'leaderboard' ? this.renderLeaderboardTab(participants, gameMeta) : ''}
+        ${this.activeTab === 'materi' ? this.renderMateriTab() : ''}
+        ${this.activeTab === 'soal' ? this.renderSoalTab() : ''}
+        ${this.activeTab === 'laporan' ? this.renderLaporanTab(participants, snap?.testimonials ?? []) : ''}
+      </div>
+    `;
+
+    this.bindMainEvents();
   }
 
   private tabBtn(id: TeacherTab, label: string): string {
@@ -155,6 +302,15 @@ export class TeacherUI {
     }">${label}</button>`;
   }
 
+  private getActivityMeta(p: ParticipantState): { label: string; cls: string } {
+    if (!p.connected) return { label: 'Offline', cls: 'bg-slate-800 text-slate-400' };
+    if (p.activity === 'playing') return { label: 'Sedang Bermain', cls: 'bg-emerald-900 text-emerald-300' };
+    if (p.activity === 'finished') return { label: 'Selesai / Refleksi', cls: 'bg-indigo-900 text-indigo-200' };
+    if (p.activity === 'avatar') return { label: 'Buat Avatar', cls: 'bg-sky-900 text-sky-200' };
+    if (p.isReady) return { label: 'Siap Misi', cls: 'bg-amber-400 text-slate-950 font-bold' };
+    return { label: 'Halaman Sekolah', cls: 'bg-teal-900/80 text-teal-200' };
+  }
+
   private renderMisiTab(
     mission: RoomSnapshot['mission'] | undefined,
     participants: RoomSnapshot['participants']
@@ -162,11 +318,23 @@ export class TeacherUI {
     const elements = paiBank.getAllElements();
     const isPlaying = mission?.status === 'playing';
     const isFinished = mission?.status === 'finished';
+    const mutedIds = new Set(this.snapshot?.mutedParticipantIds ?? []);
+    const waitingApproval = isPlaying
+      ? participants.filter((p) => p.connected && !p.approvedForMission)
+      : [];
+    const readyCount = participants.filter((p) => p.connected && p.isReady).length;
 
     return `
-      <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+      <div class="grid grid-cols-1 xl:grid-cols-12 gap-5">
         <!-- Left 7 cols: Mission Config -->
-        <section class="lg:col-span-7 space-y-5">
+        <section class="xl:col-span-7 space-y-5">
+          <!-- Admin Control Notice -->
+          <div class="p-3.5 rounded-2xl bg-emerald-950/50 border border-emerald-400/40 text-xs text-emerald-200 flex items-center justify-between gap-3">
+            <div>
+              <strong>Kendali Penuh Guru (Admin):</strong> Mode mandiri siswa dinonaktifkan. Seluruh peserta yang mengakses link langsung terpantau di sini & berkumpul di Halaman Sekolah hingga Anda memulai atau menyetujui mereka masuk misi.
+            </div>
+          </div>
+
           <!-- Step A: Select PAI Elements -->
           <div class="bg-[#111c33] border border-slate-700 rounded-2xl p-4">
             <div class="flex items-center justify-between mb-3">
@@ -249,7 +417,7 @@ export class TeacherUI {
             <div class="flex flex-wrap gap-3">
               ${
                 !isPlaying
-                  ? `<button id="btn-start-mission" class="btn-gold flex-1 text-base py-3">MULAI MISI SEKARANG</button>`
+                  ? `<button id="btn-start-mission" class="btn-gold flex-1 text-base py-3">MULAI MISI & IZINKAN SEMUA PESERTA</button>`
                   : `<button id="btn-stop-mission" class="px-5 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold flex-1 cursor-pointer">AKHIRI MISI & BUKA REFLEKSI</button>`
               }
               ${
@@ -263,42 +431,76 @@ export class TeacherUI {
           </div>
         </section>
 
-        <!-- Right 5 cols: Live Participants -->
-        <section class="lg:col-span-5 bg-[#111c33] border border-slate-700 rounded-2xl p-4 flex flex-col">
-          <div class="flex items-center justify-between mb-3">
-            <h2 class="font-display font-bold text-base text-emerald-300">
-              Peserta Bergabung (${participants.length})
-            </h2>
-            <span class="text-xs text-slate-400">Sinkronisasi Real-Time</span>
+        <!-- Right 5 cols: Live Monitored Participants & Approval Controls -->
+        <section class="xl:col-span-5 bg-[#111c33] border border-slate-700 rounded-2xl p-4 flex flex-col">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <div>
+              <h2 class="font-display font-bold text-base text-emerald-300">
+                Pemantauan Peserta (${participants.length})
+              </h2>
+              <div class="text-[11px] text-slate-400">Siap Misi: ${readyCount} · Sinkronisasi Real-Time</div>
+            </div>
+            ${
+              waitingApproval.length > 0
+                ? `<button id="btn-approve-all" class="btn-gold text-[11px] py-1.5 px-3">Setujui Semua (${waitingApproval.length})</button>`
+                : ''
+            }
           </div>
 
           ${
             participants.length === 0
               ? `<div class="flex-1 flex flex-col items-center justify-center text-center py-12 text-slate-400 text-sm">
                   <p class="font-semibold text-slate-200 mb-1">Belum ada peserta di ruang kelas.</p>
-                  <p>Bagikan link aplikasi kepada murid. Murid login menggunakan Nama, Kelas, dan Asal Sekolah.</p>
+                  <p>Bagikan link aplikasi kepada murid. Begitu murid masuk, nama dan posisi mereka di Halaman Sekolah langsung tampil di sini.</p>
                 </div>`
-              : `<div class="space-y-2 overflow-y-auto max-h-[560px] pr-1">
+              : `<div class="space-y-2 overflow-y-auto max-h-[600px] pr-1">
                   ${participants
-                    .map(
-                      (p) => `
-                    <div class="p-3 rounded-xl bg-slate-900/90 border border-slate-700/80 flex items-center justify-between gap-2">
-                      <div class="min-w-0">
-                        <div class="flex items-center gap-2">
-                          <span class="font-bold text-sm text-white truncate">${this.esc(p.nama)}</span>
-                          <span class="text-[11px] px-1.5 py-0.5 rounded bg-slate-800 text-sky-300">Kls ${this.esc(p.kelas)}</span>
-                          <span class="text-[10px] px-1.5 py-0.5 rounded ${
-                            p.connected ? 'bg-emerald-900 text-emerald-300' : 'bg-slate-800 text-slate-400'
-                          }">${p.connected ? 'Online' : 'Offline'}</span>
+                    .map((p) => {
+                      const act = this.getActivityMeta(p);
+                      const isMuted = mutedIds.has(p.id);
+                      const needsApproval = isPlaying && p.connected && !p.approvedForMission;
+                      return `
+                    <div class="p-3 rounded-xl bg-slate-900/90 border ${
+                      needsApproval ? 'border-amber-400/70' : 'border-slate-700/80'
+                    } space-y-2">
+                      <div class="flex items-center justify-between gap-2">
+                        <div class="min-w-0">
+                          <div class="flex flex-wrap items-center gap-1.5">
+                            <span class="font-bold text-sm text-white truncate">${this.esc(p.nama)}</span>
+                            <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-sky-300">Kls ${this.esc(p.kelas)}</span>
+                            <span class="text-[10px] px-1.5 py-0.5 rounded ${act.cls}">${act.label}</span>
+                            ${
+                              isPlaying && p.approvedForMission
+                                ? `<span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 border border-emerald-400/40 text-emerald-300">Disetujui</span>`
+                                : needsApproval
+                                  ? `<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-950 border border-amber-400/50 text-amber-300 font-bold">Menunggu Izin</span>`
+                                  : ''
+                            }
+                          </div>
+                          <div class="text-[11px] text-slate-400 truncate mt-0.5">${this.esc(p.sekolah)} · Level: ${p.level.toUpperCase()}</div>
                         </div>
-                        <div class="text-xs text-slate-400 truncate">${this.esc(p.sekolah)} · Level: ${p.level.toUpperCase()}</div>
+                        <div class="text-right shrink-0">
+                          <div class="font-display font-bold text-amber-300 tabular-nums">${p.score} pts</div>
+                          <div class="text-[10px] text-slate-400">${p.progressValue} ${this.esc(p.progressLabel)}</div>
+                        </div>
                       </div>
-                      <div class="text-right shrink-0">
-                        <div class="font-display font-bold text-amber-300 tabular-nums">${p.score} pts</div>
-                        <div class="text-[11px] text-slate-400">${p.progressValue} ${this.esc(p.progressLabel)}</div>
+
+                      <div class="flex flex-wrap items-center justify-end gap-1.5 pt-1.5 border-t border-slate-800/80">
+                        ${
+                          needsApproval
+                            ? `<button data-approve-id="${p.id}" class="js-approve-student px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-[11px] cursor-pointer">Setujui Masuk Misi</button>`
+                            : ''
+                        }
+                        <button data-mute-pid="${p.id}" class="js-mute-participant px-2 py-1 rounded-lg text-[11px] font-semibold cursor-pointer ${
+                          isMuted
+                            ? 'bg-emerald-900 text-emerald-200 hover:bg-emerald-800'
+                            : 'bg-slate-800 text-slate-300 hover:bg-rose-700 hover:text-white'
+                        }">
+                          ${isMuted ? 'Buka Bisu Chat' : 'Bisukan Chat'}
+                        </button>
                       </div>
-                    </div>`
-                    )
+                    </div>`;
+                    })
                     .join('')}
                 </div>`
           }
@@ -444,7 +646,6 @@ export class TeacherUI {
 
     return `
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
-        <!-- Add Question Form -->
         <form id="form-add-question" class="lg:col-span-5 bg-[#111c33] border border-slate-700 rounded-2xl p-5 space-y-3 h-fit">
           <h3 class="font-display font-bold text-lg text-emerald-300">Tambah Soal AKM Baru</h3>
           <div class="grid grid-cols-2 gap-2">
@@ -492,7 +693,6 @@ export class TeacherUI {
           <button type="submit" class="btn-primary w-full">Tambahkan ke Bank Soal</button>
         </form>
 
-        <!-- Question Bank Viewer -->
         <div class="lg:col-span-7 bg-[#111c33] border border-slate-700 rounded-2xl p-4 flex flex-col">
           <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
             <h3 class="font-display font-bold text-base text-amber-300">
@@ -610,28 +810,11 @@ export class TeacherUI {
     `;
   }
 
-  private bindEvents(): void {
-    this.container.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        soundFX.playClick();
-        this.activeTab = btn.dataset.tab as TeacherTab;
-        this.render();
-      });
-    });
+  private bindMainEvents(): void {
+    const main = this.container.querySelector<HTMLElement>('#teacher-main-content');
+    if (!main) return;
 
-    this.container.querySelector('#btn-copy-link')?.addEventListener('click', () => {
-      soundFX.playClick();
-      void navigator.clipboard?.writeText(window.location.href);
-      this.onToast('Link ruang kelas berhasil disalin! Bagikan kepada seluruh peserta.');
-    });
-
-    this.container.querySelector('#btn-teacher-logout')?.addEventListener('click', () => {
-      soundFX.playClick();
-      this.onLogout();
-    });
-
-    // Element checkboxes
-    this.container.querySelectorAll<HTMLInputElement>('.js-el-check').forEach((chk) => {
+    main.querySelectorAll<HTMLInputElement>('.js-el-check').forEach((chk) => {
       chk.addEventListener('change', () => {
         soundFX.playClick();
         if (chk.checked) this.selectedElements.add(chk.value);
@@ -641,38 +824,37 @@ export class TeacherUI {
       });
     });
 
-    // Game picker
-    this.container.querySelectorAll<HTMLButtonElement>('.js-game-pick').forEach((btn) => {
+    main.querySelectorAll<HTMLButtonElement>('.js-game-pick').forEach((btn) => {
       btn.addEventListener('click', () => {
         soundFX.playClick();
         this.selectedGameId = btn.dataset.game as GameId;
         this.pushMissionConfig();
-        this.render();
+        this.renderNav();
+        this.renderMainContent();
       });
     });
 
-    // Sliders
-    const qDur = this.container.querySelector<HTMLInputElement>('#inp-qdur');
-    const qLbl = this.container.querySelector<HTMLElement>('#lbl-qdur');
+    const qDur = main.querySelector<HTMLInputElement>('#inp-qdur');
+    const qLbl = main.querySelector<HTMLElement>('#lbl-qdur');
     qDur?.addEventListener('input', () => {
       this.questionDurationSec = Number(qDur.value);
       if (qLbl) qLbl.textContent = `${this.questionDurationSec} detik`;
     });
 
-    const gDur = this.container.querySelector<HTMLInputElement>('#inp-gdur');
-    const gLbl = this.container.querySelector<HTMLElement>('#lbl-gdur');
+    const gDur = main.querySelector<HTMLInputElement>('#inp-gdur');
+    const gLbl = main.querySelector<HTMLElement>('#lbl-gdur');
     gDur?.addEventListener('input', () => {
       this.gameDurationMin = Number(gDur.value);
       if (gLbl) gLbl.textContent = `${this.gameDurationMin} menit`;
     });
 
-    this.container.querySelector('#btn-save-config')?.addEventListener('click', () => {
+    main.querySelector('#btn-save-config')?.addEventListener('click', () => {
       soundFX.playClick();
       this.pushMissionConfig();
       this.onToast('Pengaturan misi berhasil diperbarui ke semua peserta.');
     });
 
-    this.container.querySelector('#btn-start-mission')?.addEventListener('click', () => {
+    main.querySelector('#btn-start-mission')?.addEventListener('click', () => {
       soundFX.playLevelUp();
       realtimeClient.startMission({
         elementIds: Array.from(this.selectedElements),
@@ -680,29 +862,55 @@ export class TeacherUI {
         questionDurationSec: this.questionDurationSec,
         gameDurationMin: this.gameDurationMin,
       });
-      this.onToast('Misi dimulai! Semua peserta langsung masuk ke arena 3D.');
+      this.onToast('Misi dimulai! Seluruh peserta online disetujui masuk ke arena 3D.');
     });
 
-    this.container.querySelector('#btn-stop-mission')?.addEventListener('click', () => {
+    main.querySelector('#btn-stop-mission')?.addEventListener('click', () => {
       soundFX.playClick();
       realtimeClient.stopMission();
       this.onToast('Misi diakhiri. Form refleksi siswa telah ditampilkan.');
     });
 
-    this.container.querySelector('#btn-return-lobby')?.addEventListener('click', () => {
+    main.querySelector('#btn-return-lobby')?.addEventListener('click', () => {
       soundFX.playClick();
       realtimeClient.returnToLobby();
       this.onToast('Ruang kelas kembali ke Halaman Sekolah.');
     });
 
-    this.container.querySelector('#btn-reset-room')?.addEventListener('click', () => {
+    main.querySelector('#btn-reset-room')?.addEventListener('click', () => {
       soundFX.playClick();
       realtimeClient.resetRoom();
       this.onToast('Sesi skor & peserta offline dibersihkan.');
     });
 
+    // Approval & moderation buttons in participant cards
+    main.querySelector('#btn-approve-all')?.addEventListener('click', () => {
+      soundFX.playLevelUp();
+      realtimeClient.approveAllStudents();
+      this.onToast('Semua peserta yang menunggu telah disetujui masuk ke arena misi!');
+    });
+
+    main.querySelectorAll<HTMLButtonElement>('.js-approve-student').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const pid = btn.dataset.approveId;
+        if (!pid) return;
+        soundFX.playCorrect();
+        realtimeClient.approveStudent(pid);
+        this.onToast('Peserta telah disetujui masuk ke arena misi!');
+      });
+    });
+
+    main.querySelectorAll<HTMLButtonElement>('.js-mute-participant').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const pid = btn.dataset.mutePid;
+        if (!pid) return;
+        soundFX.playClick();
+        realtimeClient.toggleMuteStudent(pid);
+      });
+    });
+
     // Add Element form
-    const elForm = this.container.querySelector<HTMLFormElement>('#form-add-element');
+    const elForm = main.querySelector<HTMLFormElement>('#form-add-element');
     elForm?.addEventListener('submit', (e) => {
       e.preventDefault();
       const fd = new FormData(elForm);
@@ -736,7 +944,7 @@ export class TeacherUI {
     });
 
     // Add Question form
-    const qForm = this.container.querySelector<HTMLFormElement>('#form-add-question');
+    const qForm = main.querySelector<HTMLFormElement>('#form-add-question');
     qForm?.addEventListener('submit', (e) => {
       e.preventDefault();
       const fd = new FormData(qForm);
@@ -784,10 +992,10 @@ export class TeacherUI {
       qForm.reset();
     });
 
-    const filterSel = this.container.querySelector<HTMLSelectElement>('#filter-q-el');
+    const filterSel = main.querySelector<HTMLSelectElement>('#filter-q-el');
     filterSel?.addEventListener('change', () => {
       this.questionFilterElement = filterSel.value;
-      this.render();
+      this.renderMainContent();
     });
   }
 
