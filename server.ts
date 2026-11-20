@@ -253,7 +253,188 @@ async function startServer(): Promise<void> {
   app.use(express.json({ limit: '2mb' }));
 
   app.get('/api/state', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
     res.json(getSnapshot());
+  });
+
+  // Shared server-authoritative student join helper (used by both WS and HTTP fallback)
+  const registerStudent = (msg: Record<string, unknown>): {
+    participant: ParticipantState;
+    isNew: boolean;
+  } => {
+    const id =
+      typeof msg.id === 'string' && msg.id.trim()
+        ? msg.id.trim()
+        : `stu_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const nama = String(msg.nama || 'Peserta').trim().slice(0, 40);
+    const kelas = String(msg.kelas || '5').trim().slice(0, 16);
+    const sekolah = String(msg.sekolah || 'SDN Nusantara').trim().slice(0, 60);
+    const avatar = msg.avatar as AvatarConfig;
+    const activity = (
+      typeof msg.activity === 'string' ? msg.activity : 'avatar'
+    ) as ParticipantActivity;
+
+    const existing = participants.get(id);
+    if (existing) {
+      const wasOffline = !existing.connected;
+      existing.nama = nama;
+      existing.kelas = kelas;
+      existing.sekolah = sekolah;
+      if (avatar) existing.avatar = avatar;
+      if (mission.status === 'playing' && existing.approvedForMission) {
+        existing.activity = 'playing';
+      } else {
+        existing.activity = activity;
+      }
+      existing.connected = true;
+      return { participant: existing, isNew: wasOffline };
+    }
+
+    const idx = participants.size;
+    const angle = idx * 0.85 - 1.2;
+    const radius = 2.4 + (idx % 3) * 1.15;
+    const reqPos = msg.pos as { x?: number; y?: number; z?: number } | undefined;
+    const spawnPos =
+      reqPos && Number.isFinite(reqPos.x) && Number.isFinite(reqPos.z)
+        ? { x: Number(reqPos.x), y: 0.08, z: Number(reqPos.z) }
+        : {
+            x: Number((Math.sin(angle) * radius).toFixed(2)),
+            y: 0.08,
+            z: Number((4.6 + Math.cos(angle) * 1.6).toFixed(2)),
+          };
+    const canResumeApproved =
+      mission.status === 'playing' &&
+      Boolean(msg.wasApproved) &&
+      typeof msg.resumeMissionStartedAt === 'number' &&
+      msg.resumeMissionStartedAt === mission.startedAt;
+
+    const created: ParticipantState = {
+      id,
+      nama,
+      kelas,
+      sekolah,
+      avatar,
+      score: 0,
+      rank: idx + 1,
+      level: 'sedang',
+      streak: 0,
+      maxStreak: 0,
+      wrongStreak: 0,
+      correctCount: 0,
+      wrongCount: 0,
+      activeBuff: 'none',
+      progressValue: 0,
+      progressLabel: 'Siap',
+      pos: spawnPos,
+      rotY: typeof msg.rotY === 'number' && Number.isFinite(msg.rotY) ? msg.rotY : Math.PI,
+      activity: canResumeApproved ? 'playing' : activity,
+      isReady: Boolean(msg.isReady),
+      approvedForMission: canResumeApproved,
+      connected: true,
+      finishedReflection: false,
+      answeredLog: [],
+      joinedAt: Date.now(),
+    };
+    participants.set(id, created);
+    return { participant: created, isNew: true };
+  };
+
+  // Shared server-authoritative chat helper (used by both WS and HTTP fallback)
+  const handleChatSendLogic = (
+    msg: Record<string, unknown>,
+    isTeacher: boolean,
+    fallbackParticipantId?: string
+  ): { ok: true; message: ChatMessage } | { ok: false; reason: string } => {
+    const rawText = String(msg.text || '');
+
+    if (isTeacher) {
+      const cleaned = rawText.replace(/\s+/g, ' ').trim().slice(0, 260);
+      if (!cleaned) return { ok: false, reason: 'Pesan tidak boleh kosong.' };
+      const chatMsg: ChatMessage = {
+        id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        senderId: 'teacher_admin',
+        senderName: String(msg.senderName || 'Guru PAI').trim().slice(0, 40),
+        senderRole: 'teacher',
+        text: cleaned,
+        createdAt: Date.now(),
+        pinned: Boolean(msg.pin),
+      };
+      if (chatMsg.pinned) {
+        chatMessages.forEach((m) => {
+          m.pinned = false;
+        });
+      }
+      chatMessages.push(chatMsg);
+      if (chatMessages.length > 150) chatMessages.shift();
+      return { ok: true, message: chatMsg };
+    }
+
+    const senderId = String(msg.senderId || fallbackParticipantId || '').trim();
+    const p = participants.get(senderId);
+    const resolvedId = p?.id || senderId;
+    const resolvedName = p?.nama || String(msg.senderName || '').trim().slice(0, 40);
+    const resolvedKelas = p?.kelas || (typeof msg.senderKelas === 'string' ? msg.senderKelas : undefined);
+
+    if (!resolvedId || !resolvedName) {
+      return {
+        ok: false,
+        reason: 'Silakan masuk sebagai peserta terlebih dahulu untuk mengirim pesan.',
+      };
+    }
+
+    const check = validateStudentMessage(resolvedId, rawText);
+    if (!check.ok) {
+      return { ok: false, reason: check.reason };
+    }
+
+    const chatMsg: ChatMessage = {
+      id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      senderId: resolvedId,
+      senderName: resolvedName,
+      senderRole: 'student',
+      senderKelas: resolvedKelas,
+      text: check.text,
+      createdAt: Date.now(),
+    };
+    chatMessages.push(chatMsg);
+    if (chatMessages.length > 150) chatMessages.shift();
+    return { ok: true, message: chatMsg };
+  };
+
+  // HTTP realtime login endpoint (instant registration + broadcasts to all WS clients)
+  app.post('/api/student/join', (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const { participant, isNew } = registerStudent(body);
+    const snap = getSnapshot();
+    if (isNew) {
+      broadcast({ type: 'student:logged_in', participant, isNew: true, snapshot: snap });
+    } else {
+      broadcastSnapshot();
+    }
+    res.json({ ok: true, id: participant.id, snapshot: snap });
+  });
+
+  app.post('/api/student/leave', (req, res) => {
+    const id = String((req.body as Record<string, unknown>)?.id || '');
+    const p = participants.get(id);
+    if (p) {
+      p.connected = false;
+      broadcastSnapshot();
+    }
+    res.json({ ok: true });
+  });
+
+  app.post('/api/chat/send', (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const isTeacher = body.role === 'teacher';
+    const result = handleChatSendLogic(body, isTeacher);
+    if (!result.ok) {
+      res.status(400).json({ ok: false, reason: result.reason });
+      return;
+    }
+    const snap = getSnapshot();
+    broadcast({ type: 'chat:message', message: result.message, snapshot: snap });
+    res.json({ ok: true, message: result.message, snapshot: snap });
   });
 
   app.get('/api/export-excel', (_req, res) => {
@@ -455,6 +636,17 @@ async function startServer(): Promise<void> {
   const server = http.createServer(app);
   wss = new WebSocketServer({ server, path: '/ws' });
 
+  // Keep WebSocket connections alive across cloud proxies
+  const wsKeepAlive = setInterval(() => {
+    if (!wss) return;
+    for (const client of wss.clients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.ping();
+      }
+    }
+  }, 20_000);
+  wss.on('close', () => clearInterval(wsKeepAlive));
+
   wss.on('connection', (ws) => {
     sendJson(ws, { type: 'room:snapshot', snapshot: getSnapshot() });
 
@@ -468,83 +660,34 @@ async function startServer(): Promise<void> {
 
       const type = String(msg.type || '');
 
+      if (type === 'ws:ping') {
+        sendJson(ws, { type: 'ws:pong', ts: Date.now() });
+        return;
+      }
+
       if (type === 'student:join') {
-        const id =
-          typeof msg.id === 'string' && msg.id.trim()
-            ? msg.id.trim()
-            : `stu_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-        const nama = String(msg.nama || 'Peserta').trim().slice(0, 40);
-        const kelas = String(msg.kelas || '5').trim().slice(0, 16);
-        const sekolah = String(msg.sekolah || 'SDN Nusantara').trim().slice(0, 60);
-        const avatar = msg.avatar as AvatarConfig;
-        const activity = (
-          typeof msg.activity === 'string' ? msg.activity : 'avatar'
-        ) as ParticipantActivity;
-
-        const existing = participants.get(id);
-        if (existing) {
-          existing.nama = nama;
-          existing.kelas = kelas;
-          existing.sekolah = sekolah;
-          if (avatar) existing.avatar = avatar;
-          // Preserve active playing state seamlessly if student reloaded mid-mission
-          if (mission.status === 'playing' && existing.approvedForMission) {
-            existing.activity = 'playing';
-          } else {
-            existing.activity = activity;
-          }
-          existing.connected = true;
+        const { participant, isNew } = registerStudent(msg);
+        socketToParticipantId.set(ws, participant.id);
+        const snap = getSnapshot();
+        sendJson(ws, { type: 'student:joined', id: participant.id, snapshot: snap });
+        if (isNew) {
+          broadcast({ type: 'student:logged_in', participant, isNew: true, snapshot: snap }, ws);
         } else {
-          // Spread spawn points neatly around the front courtyard near the flagpole
-          const idx = participants.size;
-          const angle = idx * 0.85 - 1.2;
-          const radius = 2.4 + (idx % 3) * 1.15;
-          const reqPos = msg.pos as { x?: number; y?: number; z?: number } | undefined;
-          const spawnPos =
-            reqPos && Number.isFinite(reqPos.x) && Number.isFinite(reqPos.z)
-              ? { x: Number(reqPos.x), y: 0.08, z: Number(reqPos.z) }
-              : {
-                  x: Number((Math.sin(angle) * radius).toFixed(2)),
-                  y: 0.08,
-                  z: Number((4.6 + Math.cos(angle) * 1.6).toFixed(2)),
-                };
-          const canResumeApproved =
-            mission.status === 'playing' &&
-            Boolean(msg.wasApproved) &&
-            typeof msg.resumeMissionStartedAt === 'number' &&
-            msg.resumeMissionStartedAt === mission.startedAt;
-
-          participants.set(id, {
-            id,
-            nama,
-            kelas,
-            sekolah,
-            avatar,
-            score: 0,
-            rank: idx + 1,
-            level: 'sedang',
-            streak: 0,
-            maxStreak: 0,
-            wrongStreak: 0,
-            correctCount: 0,
-            wrongCount: 0,
-            activeBuff: 'none',
-            progressValue: 0,
-            progressLabel: 'Siap',
-            pos: spawnPos,
-            rotY: typeof msg.rotY === 'number' && Number.isFinite(msg.rotY) ? msg.rotY : Math.PI,
-            activity: canResumeApproved ? 'playing' : activity,
-            isReady: Boolean(msg.isReady),
-            approvedForMission: canResumeApproved,
-            connected: true,
-            finishedReflection: false,
-            answeredLog: [],
-            joinedAt: Date.now(),
-          });
+          broadcastSnapshot();
         }
-        socketToParticipantId.set(ws, id);
-        sendJson(ws, { type: 'student:joined', id, snapshot: getSnapshot() });
-        broadcastSnapshot();
+        return;
+      }
+
+      if (type === 'student:leave') {
+        const id = String(msg.id || socketToParticipantId.get(ws) || '');
+        if (id) {
+          const p = participants.get(id);
+          if (p) {
+            p.connected = false;
+            broadcastSnapshot();
+          }
+          socketToParticipantId.delete(ws);
+        }
         return;
       }
 
@@ -669,59 +812,22 @@ async function startServer(): Promise<void> {
       // === MODERATED CHAT EVENTS ===
       if (type === 'chat:send') {
         const isTeacher = teacherSockets.has(ws) || msg.role === 'teacher';
-        const rawText = String(msg.text || '');
-
-        if (isTeacher) {
-          const cleaned = rawText.replace(/\s+/g, ' ').trim().slice(0, 260);
-          if (!cleaned) return;
-          const chatMsg: ChatMessage = {
-            id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-            senderId: 'teacher_admin',
-            senderName: String(msg.senderName || 'Guru PAI').trim().slice(0, 40),
-            senderRole: 'teacher',
-            text: cleaned,
-            createdAt: Date.now(),
-            pinned: Boolean(msg.pin),
-          };
-          if (chatMsg.pinned) {
-            chatMessages.forEach((m) => {
-              m.pinned = false;
-            });
-          }
-          chatMessages.push(chatMsg);
-          if (chatMessages.length > 150) chatMessages.shift();
-          broadcast({ type: 'chat:message', message: chatMsg, snapshot: getSnapshot() });
+        const result = handleChatSendLogic(msg, isTeacher, socketToParticipantId.get(ws));
+        if (!result.ok) {
+          sendJson(ws, { type: 'chat:rejected', reason: result.reason });
           return;
         }
+        broadcast({ type: 'chat:message', message: result.message, snapshot: getSnapshot() });
+        return;
+      }
 
-        const senderId = String(msg.senderId || socketToParticipantId.get(ws) || '');
-        const p = participants.get(senderId);
-        if (!p) {
-          sendJson(ws, {
-            type: 'chat:rejected',
-            reason: 'Silakan masuk sebagai peserta terlebih dahulu untuk mengirim pesan.',
-          });
-          return;
+      if (type === 'chat:typing') {
+        const senderId = String(msg.senderId || socketToParticipantId.get(ws) || (teacherSockets.has(ws) ? 'teacher_admin' : ''));
+        const senderName = String(msg.senderName || '').trim().slice(0, 40);
+        const role = teacherSockets.has(ws) || msg.role === 'teacher' ? 'teacher' : 'student';
+        if (senderName) {
+          broadcast({ type: 'chat:typing', senderId, senderName, role }, ws);
         }
-
-        const check = validateStudentMessage(senderId, rawText);
-        if (!check.ok) {
-          sendJson(ws, { type: 'chat:rejected', reason: check.reason });
-          return;
-        }
-
-        const chatMsg: ChatMessage = {
-          id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-          senderId: p.id,
-          senderName: p.nama,
-          senderRole: 'student',
-          senderKelas: p.kelas,
-          text: check.text,
-          createdAt: Date.now(),
-        };
-        chatMessages.push(chatMsg);
-        if (chatMessages.length > 150) chatMessages.shift();
-        broadcast({ type: 'chat:message', message: chatMsg, snapshot: getSnapshot() });
         return;
       }
 
