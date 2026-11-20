@@ -103,8 +103,10 @@ function normalizeRoomCode(raw: unknown): string {
 }
 
 const participants = new Map<string, ParticipantState>();
+const participantLastSeen = new Map<string, number>();
 const socketToParticipantId = new Map<WebSocket, string>();
 const teacherSockets = new Set<WebSocket>();
+const sseClients = new Set<express.Response>();
 let missionEndTimer: ReturnType<typeof setTimeout> | null = null;
 
 // === MODERATED SAFE-FOR-STUDENTS CHAT STATE ===
@@ -229,17 +231,37 @@ function sendJson(ws: WebSocket, payload: unknown): void {
 let wss: WebSocketServer | null = null;
 
 function broadcast(payload: unknown, exclude?: WebSocket): void {
-  if (!wss) return;
   const serialized = JSON.stringify(payload);
-  for (const client of wss.clients) {
-    if (client !== exclude && client.readyState === WebSocket.OPEN) {
-      client.send(serialized);
+  if (wss) {
+    for (const client of wss.clients) {
+      if (client !== exclude && client.readyState === WebSocket.OPEN) {
+        client.send(serialized);
+      }
+    }
+  }
+  if (sseClients.size > 0) {
+    const sseFrame = `data: ${serialized}\n\n`;
+    for (const res of sseClients) {
+      try {
+        res.write(sseFrame);
+      } catch {
+        sseClients.delete(res);
+      }
     }
   }
 }
 
 function broadcastSnapshot(): void {
   broadcast({ type: 'room:snapshot', snapshot: getSnapshot() });
+}
+
+function isParticipantStillOnAnotherSocket(participantId: string, closingWs: WebSocket): boolean {
+  for (const [sock, pid] of socketToParticipantId.entries()) {
+    if (sock !== closingWs && pid === participantId && sock.readyState === WebSocket.OPEN) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function stopMission(reason: 'teacher' | 'timeout'): void {
@@ -297,6 +319,7 @@ async function startServer(): Promise<void> {
         existing.activity = activity;
       }
       existing.connected = true;
+      participantLastSeen.set(id, Date.now());
       return { participant: existing, isNew: wasOffline };
     }
 
@@ -346,6 +369,7 @@ async function startServer(): Promise<void> {
       joinedAt: Date.now(),
     };
     participants.set(id, created);
+    participantLastSeen.set(id, Date.now());
     return { participant: created, isNew: true };
   };
 
@@ -392,6 +416,11 @@ async function startServer(): Promise<void> {
       };
     }
 
+    if (p) {
+      p.connected = true;
+      participantLastSeen.set(p.id, Date.now());
+    }
+
     const check = validateStudentMessage(resolvedId, rawText);
     if (!check.ok) {
       return { ok: false, reason: check.reason };
@@ -430,7 +459,438 @@ async function startServer(): Promise<void> {
     };
   };
 
-  // HTTP realtime login endpoint (instant registration + broadcasts to all WS clients)
+  // === SERVER-SENT EVENTS (SSE) INSTANT REALTIME STREAM ===
+  // Works reliably over standard HTTPS/HTTP2 proxies where WebSocket upgrades may drop
+  app.get('/api/events', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    sseClients.add(res);
+    // Send initial snapshot immediately upon subscribing
+    res.write(`data: ${JSON.stringify({ type: 'room:snapshot', snapshot: getSnapshot() })}\n\n`);
+
+    const keepAlive = setInterval(() => {
+      try {
+        res.write(': ping\n\n');
+      } catch {
+        clearInterval(keepAlive);
+        sseClients.delete(res);
+      }
+    }, 15_000);
+
+    req.on('close', () => {
+      clearInterval(keepAlive);
+      sseClients.delete(res);
+    });
+  });
+
+  // Shared dispatcher for both WebSocket messages and HTTP /api/action mirror
+  const executeRoomAction = (
+    msg: Record<string, unknown>,
+    opts: { isTeacher: boolean; senderWs?: WebSocket; fallbackParticipantId?: string }
+  ): { ok: boolean; error?: string; payload?: Record<string, unknown> } => {
+    const type = String(msg.type || '');
+    const { isTeacher, senderWs, fallbackParticipantId } = opts;
+
+    if (type === 'student:update_avatar') {
+      const id = String(msg.id || fallbackParticipantId || '');
+      const p = participants.get(id);
+      if (p && msg.avatar) {
+        p.avatar = msg.avatar as AvatarConfig;
+        p.connected = true;
+        participantLastSeen.set(id, Date.now());
+        if (typeof msg.activity === 'string') {
+          p.activity = msg.activity as ParticipantActivity;
+        }
+        broadcastSnapshot();
+      }
+      return { ok: true };
+    }
+
+    if (type === 'student:update_activity') {
+      const id = String(msg.id || fallbackParticipantId || '');
+      const p = participants.get(id);
+      if (p && typeof msg.activity === 'string') {
+        p.activity = msg.activity as ParticipantActivity;
+        p.connected = true;
+        participantLastSeen.set(id, Date.now());
+        broadcastSnapshot();
+      }
+      return { ok: true };
+    }
+
+    if (type === 'student:set_ready') {
+      const id = String(msg.id || fallbackParticipantId || '');
+      const p = participants.get(id);
+      if (p) {
+        p.isReady = Boolean(msg.ready);
+        p.connected = true;
+        participantLastSeen.set(id, Date.now());
+        broadcastSnapshot();
+      }
+      return { ok: true };
+    }
+
+    if (type === 'student:move') {
+      const id = String(msg.id || fallbackParticipantId || '');
+      const p = participants.get(id);
+      const pos = msg.pos as { x: number; y: number; z: number } | undefined;
+      const rotY =
+        typeof msg.rotY === 'number' && Number.isFinite(msg.rotY) ? msg.rotY : p?.rotY ?? 0;
+      if (p && pos && Number.isFinite(pos.x) && Number.isFinite(pos.z)) {
+        p.pos = { x: pos.x, y: pos.y || 0.08, z: pos.z };
+        p.rotY = rotY;
+        p.connected = true;
+        participantLastSeen.set(id, Date.now());
+        broadcast({ type: 'player:moved', id, pos: p.pos, rotY: p.rotY }, senderWs);
+      }
+      return { ok: true };
+    }
+
+    if (type === 'student:sync_progress') {
+      const id = String(msg.id || fallbackParticipantId || '');
+      const p = participants.get(id);
+      if (!p || !mission.active || !p.approvedForMission) return { ok: true };
+      p.connected = true;
+      participantLastSeen.set(id, Date.now());
+      if (typeof msg.score === 'number') p.score = Math.max(0, Math.round(msg.score));
+      if (typeof msg.level === 'string') p.level = msg.level as DifficultyLevel;
+      if (typeof msg.streak === 'number') p.streak = msg.streak;
+      if (typeof msg.maxStreak === 'number') p.maxStreak = Math.max(p.maxStreak, msg.maxStreak);
+      if (typeof msg.wrongStreak === 'number') p.wrongStreak = msg.wrongStreak;
+      if (typeof msg.correctCount === 'number') p.correctCount = msg.correctCount;
+      if (typeof msg.wrongCount === 'number') p.wrongCount = msg.wrongCount;
+      if (typeof msg.activeBuff === 'string') p.activeBuff = msg.activeBuff as BuffType;
+      if (typeof msg.progressValue === 'number') p.progressValue = msg.progressValue;
+      if (typeof msg.progressLabel === 'string') p.progressLabel = msg.progressLabel;
+      if (msg.answerEntry && typeof msg.answerEntry === 'object') {
+        p.answeredLog.push(msg.answerEntry as AnswerLogEntry);
+      }
+      broadcastSnapshot();
+      return { ok: true };
+    }
+
+    if (type === 'student:attack_player') {
+      const attackerId = String(msg.attackerId || fallbackParticipantId || '');
+      const targetId = String(msg.targetId || '');
+      const amount = Math.min(200, Math.max(50, Number(msg.amount) || 150));
+      const attacker = participants.get(attackerId);
+      const target = participants.get(targetId);
+      if (
+        attacker &&
+        target &&
+        attacker.id !== target.id &&
+        mission.active &&
+        attacker.approvedForMission
+      ) {
+        target.score = Math.max(0, target.score - amount);
+        broadcast({
+          type: 'buff:attacked',
+          attackerName: attacker.nama,
+          targetId: target.id,
+          targetName: target.nama,
+          amount,
+          snapshot: getSnapshot(),
+        });
+      }
+      return { ok: true };
+    }
+
+    if (type === 'student:submit_reflection') {
+      const id = String(msg.id || fallbackParticipantId || '');
+      const p = participants.get(id);
+      const refleksi = String(msg.refleksi || '').trim().slice(0, 400);
+      const komentar = String(msg.komentar || '').trim().slice(0, 300);
+      const kritikSaran = String(msg.kritikSaran || '').trim().slice(0, 300);
+      if (!refleksi) return { ok: false, error: 'Refleksi wajib diisi.' };
+
+      const item: TestimonialItem = {
+        id: `testi_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        nama: p?.nama || String(msg.nama || 'Peserta'),
+        kelas: p?.kelas || String(msg.kelas || '5'),
+        sekolah: p?.sekolah || String(msg.sekolah || 'SDN Nusantara'),
+        refleksi,
+        komentar,
+        kritikSaran,
+        gameName: GAME_NAMES[mission.gameId] || mission.gameId,
+        skor: p?.score ?? Number(msg.skor || 0),
+        createdAt: Date.now(),
+      };
+      if (p) {
+        p.finishedReflection = true;
+        p.activity = 'schoolyard';
+      }
+      persisted.testimonials.push(item);
+      saveDb(persisted);
+      if (senderWs) sendJson(senderWs, { type: 'reflection:saved', item });
+      broadcastSnapshot();
+      return { ok: true, payload: { item } };
+    }
+
+    if (type === 'chat:typing') {
+      const senderId = String(
+        msg.senderId || fallbackParticipantId || (isTeacher ? 'teacher_admin' : '')
+      );
+      const senderName = String(msg.senderName || '').trim().slice(0, 40);
+      const role = isTeacher || msg.role === 'teacher' ? 'teacher' : 'student';
+      if (senderName) {
+        broadcast({ type: 'chat:typing', senderId, senderName, role }, senderWs);
+      }
+      return { ok: true };
+    }
+
+    if (type === 'chat:delete') {
+      if (!isTeacher) return { ok: false, error: 'Hanya Guru yang dapat menghapus pesan.' };
+      const msgId = String(msg.messageId || '');
+      const found = chatMessages.find((m) => m.id === msgId);
+      if (found) {
+        found.deleted = true;
+        found.pinned = false;
+        broadcastSnapshot();
+      }
+      return { ok: true };
+    }
+
+    if (type === 'chat:pin') {
+      if (!isTeacher) return { ok: false, error: 'Hanya Guru yang dapat menyematkan pesan.' };
+      const msgId = String(msg.messageId || '');
+      const target = chatMessages.find((m) => m.id === msgId && !m.deleted);
+      if (target) {
+        const nextPinned = !target.pinned;
+        chatMessages.forEach((m) => {
+          m.pinned = false;
+        });
+        target.pinned = nextPinned;
+        broadcastSnapshot();
+      }
+      return { ok: true };
+    }
+
+    if (type === 'chat:toggle_mute_all') {
+      if (!isTeacher) return { ok: false, error: 'Hanya Guru yang dapat membisukan kelas.' };
+      chatMutedAll = typeof msg.muted === 'boolean' ? msg.muted : !chatMutedAll;
+      broadcastSnapshot();
+      return { ok: true };
+    }
+
+    if (type === 'chat:toggle_mute_student') {
+      if (!isTeacher) return { ok: false, error: 'Hanya Guru yang dapat membisukan siswa.' };
+      const pid = String(msg.participantId || '');
+      if (pid) {
+        if (mutedParticipantIds.has(pid)) mutedParticipantIds.delete(pid);
+        else mutedParticipantIds.add(pid);
+        broadcastSnapshot();
+      }
+      return { ok: true };
+    }
+
+    if (type === 'teacher:set_room_code') {
+      if (!isTeacher) return { ok: false, error: 'Akses Guru diperlukan.' };
+      const nextCode = normalizeRoomCode(msg.roomCode);
+      if (nextCode.length >= 3) {
+        activeRoomCode = nextCode;
+        broadcastSnapshot();
+      }
+      return { ok: true };
+    }
+
+    if (type === 'teacher:configure_mission') {
+      if (!isTeacher) return { ok: false, error: 'Akses Guru diperlukan.' };
+      if (Array.isArray(msg.elementIds) && msg.elementIds.length > 0) {
+        mission.elementIds = msg.elementIds.map(String);
+      }
+      if (typeof msg.gameId === 'string' && msg.gameId in GAME_NAMES) {
+        mission.gameId = msg.gameId as GameId;
+      }
+      if (typeof msg.questionDurationSec === 'number') {
+        mission.questionDurationSec = Math.min(120, Math.max(10, Math.round(msg.questionDurationSec)));
+      }
+      if (typeof msg.gameDurationMin === 'number') {
+        mission.gameDurationMin = Math.min(60, Math.max(1, Math.round(msg.gameDurationMin)));
+      }
+      broadcastSnapshot();
+      return { ok: true };
+    }
+
+    if (type === 'teacher:start_mission') {
+      if (!isTeacher) return { ok: false, error: 'Akses Guru diperlukan.' };
+      if (missionEndTimer) {
+        clearTimeout(missionEndTimer);
+        missionEndTimer = null;
+      }
+      if (Array.isArray(msg.elementIds) && msg.elementIds.length > 0) {
+        mission.elementIds = msg.elementIds.map(String);
+      }
+      if (typeof msg.gameId === 'string' && msg.gameId in GAME_NAMES) {
+        mission.gameId = msg.gameId as GameId;
+      }
+      if (typeof msg.questionDurationSec === 'number') {
+        mission.questionDurationSec = Math.min(120, Math.max(10, Math.round(msg.questionDurationSec)));
+      }
+      if (typeof msg.gameDurationMin === 'number') {
+        mission.gameDurationMin = Math.min(60, Math.max(1, Math.round(msg.gameDurationMin)));
+      }
+
+      for (const p of participants.values()) {
+        p.score = 0;
+        p.level = 'sedang';
+        p.streak = 0;
+        p.maxStreak = 0;
+        p.wrongStreak = 0;
+        p.correctCount = 0;
+        p.wrongCount = 0;
+        p.activeBuff = 'none';
+        p.progressValue = 0;
+        p.progressLabel = 'Mulai';
+        p.finishedReflection = false;
+        p.answeredLog = [];
+        p.approvedForMission = p.connected;
+        if (p.connected) p.activity = 'playing';
+      }
+
+      const now = Date.now();
+      mission.active = true;
+      mission.status = 'playing';
+      mission.startedAt = now;
+      mission.endsAt = now + mission.gameDurationMin * 60_000;
+
+      missionEndTimer = setTimeout(() => {
+        stopMission('timeout');
+      }, mission.gameDurationMin * 60_000);
+
+      broadcast({ type: 'mission:started', snapshot: getSnapshot() });
+      return { ok: true };
+    }
+
+    if (type === 'teacher:approve_student') {
+      if (!isTeacher) return { ok: false, error: 'Akses Guru diperlukan.' };
+      const pid = String(msg.participantId || '');
+      const p = participants.get(pid);
+      if (p) {
+        p.approvedForMission = true;
+        if (mission.status === 'playing') {
+          p.activity = 'playing';
+          broadcast({
+            type: 'student:approved',
+            participantId: pid,
+            snapshot: getSnapshot(),
+          });
+        } else {
+          broadcastSnapshot();
+        }
+      }
+      return { ok: true };
+    }
+
+    if (type === 'teacher:approve_all_students') {
+      if (!isTeacher) return { ok: false, error: 'Akses Guru diperlukan.' };
+      const approvedIds: string[] = [];
+      for (const p of participants.values()) {
+        if (p.connected && !p.approvedForMission) {
+          p.approvedForMission = true;
+          if (mission.status === 'playing') p.activity = 'playing';
+          approvedIds.push(p.id);
+        }
+      }
+      if (mission.status === 'playing' && approvedIds.length > 0) {
+        for (const pid of approvedIds) {
+          broadcast({
+            type: 'student:approved',
+            participantId: pid,
+            snapshot: getSnapshot(),
+          });
+        }
+      } else {
+        broadcastSnapshot();
+      }
+      return { ok: true };
+    }
+
+    if (type === 'teacher:stop_mission') {
+      if (!isTeacher) return { ok: false, error: 'Akses Guru diperlukan.' };
+      stopMission('teacher');
+      return { ok: true };
+    }
+
+    if (type === 'teacher:return_lobby') {
+      if (!isTeacher) return { ok: false, error: 'Akses Guru diperlukan.' };
+      if (missionEndTimer) {
+        clearTimeout(missionEndTimer);
+        missionEndTimer = null;
+      }
+      mission.active = false;
+      mission.status = 'lobby';
+      mission.startedAt = null;
+      mission.endsAt = null;
+      for (const p of participants.values()) {
+        p.approvedForMission = false;
+        if (p.connected) p.activity = 'schoolyard';
+      }
+      broadcastSnapshot();
+      return { ok: true };
+    }
+
+    if (type === 'teacher:add_element') {
+      if (!isTeacher) return { ok: false, error: 'Akses Guru diperlukan.' };
+      const el = msg.element as PaiElement | undefined;
+      if (el && el.id && el.name && el.materialTitle) {
+        persisted.customElements.push({ ...el, isCustom: true });
+        saveDb(persisted);
+        broadcastSnapshot();
+      }
+      return { ok: true };
+    }
+
+    if (type === 'teacher:add_question') {
+      if (!isTeacher) return { ok: false, error: 'Akses Guru diperlukan.' };
+      const q = msg.question as QuestionItem | undefined;
+      if (q && q.id && q.elementId && q.prompt && Array.isArray(q.options)) {
+        persisted.customQuestions.push(q);
+        saveDb(persisted);
+        broadcastSnapshot();
+      }
+      return { ok: true };
+    }
+
+    if (type === 'teacher:reset_room') {
+      if (!isTeacher) return { ok: false, error: 'Akses Guru diperlukan.' };
+      if (missionEndTimer) {
+        clearTimeout(missionEndTimer);
+        missionEndTimer = null;
+      }
+      mission.active = false;
+      mission.status = 'lobby';
+      mission.startedAt = null;
+      mission.endsAt = null;
+      for (const [pid, p] of participants.entries()) {
+        if (!p.connected) {
+          participants.delete(pid);
+          participantLastSeen.delete(pid);
+          mutedParticipantIds.delete(pid);
+        } else {
+          p.score = 0;
+          p.streak = 0;
+          p.correctCount = 0;
+          p.wrongCount = 0;
+          p.progressValue = 0;
+          p.answeredLog = [];
+          p.finishedReflection = false;
+          p.approvedForMission = false;
+          p.isReady = false;
+          p.activity = 'schoolyard';
+        }
+      }
+      broadcastSnapshot();
+      return { ok: true };
+    }
+
+    return { ok: false, error: 'Aksi tidak dikenal.' };
+  };
+
+  // HTTP realtime login endpoint (instant registration + broadcasts to all WS & SSE clients)
   app.post('/api/student/join', (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const codeCheck = validateStudentRoomCode(body);
@@ -446,6 +906,20 @@ async function startServer(): Promise<void> {
       broadcastSnapshot();
     }
     res.json({ ok: true, id: participant.id, snapshot: snap });
+  });
+
+  app.post('/api/student/heartbeat', (req, res) => {
+    const id = String((req.body as Record<string, unknown>)?.id || '').trim();
+    const p = participants.get(id);
+    if (p) {
+      const wasOffline = !p.connected;
+      p.connected = true;
+      participantLastSeen.set(id, Date.now());
+      if (wasOffline) {
+        broadcastSnapshot();
+      }
+    }
+    res.json({ ok: true, serverTime: Date.now() });
   });
 
   app.post('/api/teacher/login', (req, res) => {
@@ -473,6 +947,7 @@ async function startServer(): Promise<void> {
     const p = participants.get(id);
     if (p) {
       p.connected = false;
+      participantLastSeen.delete(id);
       broadcastSnapshot();
     }
     res.json({ ok: true });
@@ -489,6 +964,22 @@ async function startServer(): Promise<void> {
     const snap = getSnapshot();
     broadcast({ type: 'chat:message', message: result.message, snapshot: snap });
     res.json({ ok: true, message: result.message, snapshot: snap });
+  });
+
+  // Unified HTTP action mirror so 100% of teacher & student actions work even if WS is blocked
+  app.post('/api/action', (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const adminCode = String(body.adminCode || '').trim().toLowerCase();
+    const isTeacher = adminCode === ADMIN_CODE;
+    const result = executeRoomAction(body, {
+      isTeacher,
+      fallbackParticipantId: typeof body.id === 'string' ? body.id : undefined,
+    });
+    if (!result.ok) {
+      res.status(403).json({ ok: false, error: result.error });
+      return;
+    }
+    res.json({ ok: true, ...(result.payload ?? {}), snapshot: getSnapshot() });
   });
 
   app.get('/api/export-excel', (_req, res) => {
@@ -715,6 +1206,15 @@ async function startServer(): Promise<void> {
       const type = String(msg.type || '');
 
       if (type === 'ws:ping') {
+        const pid = socketToParticipantId.get(ws);
+        if (pid) {
+          participantLastSeen.set(pid, Date.now());
+          const p = participants.get(pid);
+          if (p && !p.connected) {
+            p.connected = true;
+            broadcastSnapshot();
+          }
+        }
         sendJson(ws, { type: 'ws:pong', ts: Date.now() });
         return;
       }
@@ -743,6 +1243,7 @@ async function startServer(): Promise<void> {
           const p = participants.get(id);
           if (p) {
             p.connected = false;
+            participantLastSeen.delete(id);
             broadcastSnapshot();
           }
           socketToParticipantId.delete(ws);
@@ -750,125 +1251,6 @@ async function startServer(): Promise<void> {
         return;
       }
 
-      if (type === 'student:update_avatar') {
-        const id = String(msg.id || socketToParticipantId.get(ws) || '');
-        const p = participants.get(id);
-        if (p && msg.avatar) {
-          p.avatar = msg.avatar as AvatarConfig;
-          if (typeof msg.activity === 'string') {
-            p.activity = msg.activity as ParticipantActivity;
-          }
-          broadcastSnapshot();
-        }
-        return;
-      }
-
-      if (type === 'student:update_activity') {
-        const id = String(msg.id || socketToParticipantId.get(ws) || '');
-        const p = participants.get(id);
-        if (p && typeof msg.activity === 'string') {
-          p.activity = msg.activity as ParticipantActivity;
-          broadcastSnapshot();
-        }
-        return;
-      }
-
-      if (type === 'student:set_ready') {
-        const id = String(msg.id || socketToParticipantId.get(ws) || '');
-        const p = participants.get(id);
-        if (p) {
-          p.isReady = Boolean(msg.ready);
-          broadcastSnapshot();
-        }
-        return;
-      }
-
-      if (type === 'student:move') {
-        const id = String(msg.id || socketToParticipantId.get(ws) || '');
-        const p = participants.get(id);
-        const pos = msg.pos as { x: number; y: number; z: number } | undefined;
-        const rotY = typeof msg.rotY === 'number' && Number.isFinite(msg.rotY) ? msg.rotY : p?.rotY ?? 0;
-        if (p && pos && Number.isFinite(pos.x) && Number.isFinite(pos.z)) {
-          p.pos = { x: pos.x, y: pos.y || 0.08, z: pos.z };
-          p.rotY = rotY;
-          broadcast({ type: 'player:moved', id, pos: p.pos, rotY: p.rotY }, ws);
-        }
-        return;
-      }
-
-      if (type === 'student:sync_progress') {
-        const id = String(msg.id || socketToParticipantId.get(ws) || '');
-        const p = participants.get(id);
-        if (!p || !mission.active || !p.approvedForMission) return;
-        if (typeof msg.score === 'number') p.score = Math.max(0, Math.round(msg.score));
-        if (typeof msg.level === 'string') p.level = msg.level as DifficultyLevel;
-        if (typeof msg.streak === 'number') p.streak = msg.streak;
-        if (typeof msg.maxStreak === 'number') p.maxStreak = Math.max(p.maxStreak, msg.maxStreak);
-        if (typeof msg.wrongStreak === 'number') p.wrongStreak = msg.wrongStreak;
-        if (typeof msg.correctCount === 'number') p.correctCount = msg.correctCount;
-        if (typeof msg.wrongCount === 'number') p.wrongCount = msg.wrongCount;
-        if (typeof msg.activeBuff === 'string') p.activeBuff = msg.activeBuff as BuffType;
-        if (typeof msg.progressValue === 'number') p.progressValue = msg.progressValue;
-        if (typeof msg.progressLabel === 'string') p.progressLabel = msg.progressLabel;
-        if (msg.answerEntry && typeof msg.answerEntry === 'object') {
-          p.answeredLog.push(msg.answerEntry as AnswerLogEntry);
-        }
-        broadcastSnapshot();
-        return;
-      }
-
-      if (type === 'student:attack_player') {
-        const attackerId = String(msg.attackerId || socketToParticipantId.get(ws) || '');
-        const targetId = String(msg.targetId || '');
-        const amount = Math.min(200, Math.max(50, Number(msg.amount) || 150));
-        const attacker = participants.get(attackerId);
-        const target = participants.get(targetId);
-        if (attacker && target && attacker.id !== target.id && mission.active && attacker.approvedForMission) {
-          target.score = Math.max(0, target.score - amount);
-          broadcast({
-            type: 'buff:attacked',
-            attackerName: attacker.nama,
-            targetId: target.id,
-            targetName: target.nama,
-            amount,
-            snapshot: getSnapshot(),
-          });
-        }
-        return;
-      }
-
-      if (type === 'student:submit_reflection') {
-        const id = String(msg.id || socketToParticipantId.get(ws) || '');
-        const p = participants.get(id);
-        const refleksi = String(msg.refleksi || '').trim().slice(0, 400);
-        const komentar = String(msg.komentar || '').trim().slice(0, 300);
-        const kritikSaran = String(msg.kritikSaran || '').trim().slice(0, 300);
-        if (!refleksi) return;
-
-        const item: TestimonialItem = {
-          id: `testi_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-          nama: p?.nama || String(msg.nama || 'Peserta'),
-          kelas: p?.kelas || String(msg.kelas || '5'),
-          sekolah: p?.sekolah || String(msg.sekolah || 'SDN Nusantara'),
-          refleksi,
-          komentar,
-          kritikSaran,
-          gameName: GAME_NAMES[mission.gameId] || mission.gameId,
-          skor: p?.score ?? Number(msg.skor || 0),
-          createdAt: Date.now(),
-        };
-        if (p) {
-          p.finishedReflection = true;
-          p.activity = 'schoolyard';
-        }
-        persisted.testimonials.push(item);
-        saveDb(persisted);
-        sendJson(ws, { type: 'reflection:saved', item });
-        broadcastSnapshot();
-        return;
-      }
-
-      // === MODERATED CHAT EVENTS ===
       if (type === 'chat:send') {
         const isTeacher = teacherSockets.has(ws) || msg.role === 'teacher';
         const result = handleChatSendLogic(msg, isTeacher, socketToParticipantId.get(ws));
@@ -880,64 +1262,6 @@ async function startServer(): Promise<void> {
         return;
       }
 
-      if (type === 'chat:typing') {
-        const senderId = String(msg.senderId || socketToParticipantId.get(ws) || (teacherSockets.has(ws) ? 'teacher_admin' : ''));
-        const senderName = String(msg.senderName || '').trim().slice(0, 40);
-        const role = teacherSockets.has(ws) || msg.role === 'teacher' ? 'teacher' : 'student';
-        if (senderName) {
-          broadcast({ type: 'chat:typing', senderId, senderName, role }, ws);
-        }
-        return;
-      }
-
-      if (type === 'chat:delete') {
-        if (!teacherSockets.has(ws)) return;
-        const msgId = String(msg.messageId || '');
-        const found = chatMessages.find((m) => m.id === msgId);
-        if (found) {
-          found.deleted = true;
-          found.pinned = false;
-          broadcastSnapshot();
-        }
-        return;
-      }
-
-      if (type === 'chat:pin') {
-        if (!teacherSockets.has(ws)) return;
-        const msgId = String(msg.messageId || '');
-        const target = chatMessages.find((m) => m.id === msgId && !m.deleted);
-        if (target) {
-          const nextPinned = !target.pinned;
-          chatMessages.forEach((m) => {
-            m.pinned = false;
-          });
-          target.pinned = nextPinned;
-          broadcastSnapshot();
-        }
-        return;
-      }
-
-      if (type === 'chat:toggle_mute_all') {
-        if (!teacherSockets.has(ws)) return;
-        chatMutedAll = typeof msg.muted === 'boolean' ? msg.muted : !chatMutedAll;
-        broadcastSnapshot();
-        return;
-      }
-
-      if (type === 'chat:toggle_mute_student') {
-        if (!teacherSockets.has(ws)) return;
-        const pid = String(msg.participantId || '');
-        if (!pid) return;
-        if (mutedParticipantIds.has(pid)) {
-          mutedParticipantIds.delete(pid);
-        } else {
-          mutedParticipantIds.add(pid);
-        }
-        broadcastSnapshot();
-        return;
-      }
-
-      // === TEACHER ADMIN AUTH & ROOM CODE ===
       if (type === 'teacher:login') {
         const code = String(msg.code || '').trim().toLowerCase();
         const sekolah = String(msg.sekolah || '').trim();
@@ -966,206 +1290,12 @@ async function startServer(): Promise<void> {
         return;
       }
 
-      if (type === 'teacher:set_room_code') {
-        if (!teacherSockets.has(ws)) return;
-        const nextCode = normalizeRoomCode(msg.roomCode);
-        if (nextCode.length >= 3) {
-          activeRoomCode = nextCode;
-          broadcastSnapshot();
-        }
-        return;
-      }
-
-      if (type === 'teacher:configure_mission') {
-        if (!teacherSockets.has(ws)) return;
-        if (Array.isArray(msg.elementIds) && msg.elementIds.length > 0) {
-          mission.elementIds = msg.elementIds.map(String);
-        }
-        if (typeof msg.gameId === 'string' && msg.gameId in GAME_NAMES) {
-          mission.gameId = msg.gameId as GameId;
-        }
-        if (typeof msg.questionDurationSec === 'number') {
-          mission.questionDurationSec = Math.min(120, Math.max(10, Math.round(msg.questionDurationSec)));
-        }
-        if (typeof msg.gameDurationMin === 'number') {
-          mission.gameDurationMin = Math.min(60, Math.max(1, Math.round(msg.gameDurationMin)));
-        }
-        broadcastSnapshot();
-        return;
-      }
-
-      if (type === 'teacher:start_mission') {
-        if (!teacherSockets.has(ws)) return;
-        if (missionEndTimer) {
-          clearTimeout(missionEndTimer);
-          missionEndTimer = null;
-        }
-        if (Array.isArray(msg.elementIds) && msg.elementIds.length > 0) {
-          mission.elementIds = msg.elementIds.map(String);
-        }
-        if (typeof msg.gameId === 'string' && msg.gameId in GAME_NAMES) {
-          mission.gameId = msg.gameId as GameId;
-        }
-        if (typeof msg.questionDurationSec === 'number') {
-          mission.questionDurationSec = Math.min(120, Math.max(10, Math.round(msg.questionDurationSec)));
-        }
-        if (typeof msg.gameDurationMin === 'number') {
-          mission.gameDurationMin = Math.min(60, Math.max(1, Math.round(msg.gameDurationMin)));
-        }
-
-        // Approve all currently connected participants to launch into the mission
-        for (const p of participants.values()) {
-          p.score = 0;
-          p.level = 'sedang';
-          p.streak = 0;
-          p.maxStreak = 0;
-          p.wrongStreak = 0;
-          p.correctCount = 0;
-          p.wrongCount = 0;
-          p.activeBuff = 'none';
-          p.progressValue = 0;
-          p.progressLabel = 'Mulai';
-          p.finishedReflection = false;
-          p.answeredLog = [];
-          p.approvedForMission = p.connected;
-          if (p.connected) {
-            p.activity = 'playing';
-          }
-        }
-
-        const now = Date.now();
-        mission.active = true;
-        mission.status = 'playing';
-        mission.startedAt = now;
-        mission.endsAt = now + mission.gameDurationMin * 60_000;
-
-        missionEndTimer = setTimeout(() => {
-          stopMission('timeout');
-        }, mission.gameDurationMin * 60_000);
-
-        broadcast({ type: 'mission:started', snapshot: getSnapshot() });
-        return;
-      }
-
-      if (type === 'teacher:approve_student') {
-        if (!teacherSockets.has(ws)) return;
-        const pid = String(msg.participantId || '');
-        const p = participants.get(pid);
-        if (p) {
-          p.approvedForMission = true;
-          if (mission.status === 'playing') {
-            p.activity = 'playing';
-            broadcast({
-              type: 'student:approved',
-              participantId: pid,
-              snapshot: getSnapshot(),
-            });
-          } else {
-            broadcastSnapshot();
-          }
-        }
-        return;
-      }
-
-      if (type === 'teacher:approve_all_students') {
-        if (!teacherSockets.has(ws)) return;
-        const approvedIds: string[] = [];
-        for (const p of participants.values()) {
-          if (p.connected && !p.approvedForMission) {
-            p.approvedForMission = true;
-            if (mission.status === 'playing') p.activity = 'playing';
-            approvedIds.push(p.id);
-          }
-        }
-        if (mission.status === 'playing' && approvedIds.length > 0) {
-          for (const pid of approvedIds) {
-            broadcast({
-              type: 'student:approved',
-              participantId: pid,
-              snapshot: getSnapshot(),
-            });
-          }
-        } else {
-          broadcastSnapshot();
-        }
-        return;
-      }
-
-      if (type === 'teacher:stop_mission') {
-        if (!teacherSockets.has(ws)) return;
-        stopMission('teacher');
-        return;
-      }
-
-      if (type === 'teacher:return_lobby') {
-        if (!teacherSockets.has(ws)) return;
-        if (missionEndTimer) {
-          clearTimeout(missionEndTimer);
-          missionEndTimer = null;
-        }
-        mission.active = false;
-        mission.status = 'lobby';
-        mission.startedAt = null;
-        mission.endsAt = null;
-        for (const p of participants.values()) {
-          p.approvedForMission = false;
-          if (p.connected) p.activity = 'schoolyard';
-        }
-        broadcastSnapshot();
-        return;
-      }
-
-      if (type === 'teacher:add_element') {
-        if (!teacherSockets.has(ws)) return;
-        const el = msg.element as PaiElement | undefined;
-        if (el && el.id && el.name && el.materialTitle) {
-          persisted.customElements.push({ ...el, isCustom: true });
-          saveDb(persisted);
-          broadcastSnapshot();
-        }
-        return;
-      }
-
-      if (type === 'teacher:add_question') {
-        if (!teacherSockets.has(ws)) return;
-        const q = msg.question as QuestionItem | undefined;
-        if (q && q.id && q.elementId && q.prompt && Array.isArray(q.options)) {
-          persisted.customQuestions.push(q);
-          saveDb(persisted);
-          broadcastSnapshot();
-        }
-        return;
-      }
-
-      if (type === 'teacher:reset_room') {
-        if (!teacherSockets.has(ws)) return;
-        if (missionEndTimer) {
-          clearTimeout(missionEndTimer);
-          missionEndTimer = null;
-        }
-        mission.active = false;
-        mission.status = 'lobby';
-        mission.startedAt = null;
-        mission.endsAt = null;
-        for (const [pid, p] of participants.entries()) {
-          if (!p.connected) {
-            participants.delete(pid);
-            mutedParticipantIds.delete(pid);
-          } else {
-            p.score = 0;
-            p.streak = 0;
-            p.correctCount = 0;
-            p.wrongCount = 0;
-            p.progressValue = 0;
-            p.answeredLog = [];
-            p.finishedReflection = false;
-            p.approvedForMission = false;
-            p.isReady = false;
-            p.activity = 'schoolyard';
-          }
-        }
-        broadcastSnapshot();
-      }
+      // Delegate all remaining student, chat moderation, and teacher actions to shared dispatcher
+      executeRoomAction(msg, {
+        isTeacher: teacherSockets.has(ws),
+        senderWs: ws,
+        fallbackParticipantId: socketToParticipantId.get(ws),
+      });
     });
 
     ws.on('close', () => {
@@ -1173,14 +1303,49 @@ async function startServer(): Promise<void> {
       const id = socketToParticipantId.get(ws);
       if (id) {
         socketToParticipantId.delete(ws);
-        const p = participants.get(id);
-        if (p) {
-          p.connected = false;
-          broadcastSnapshot();
-        }
+        // Grace period so transient WS reconnects or HTTP/SSE-only phones never flicker offline
+        setTimeout(() => {
+          if (isParticipantStillOnAnotherSocket(id, ws)) return;
+          const lastSeen = participantLastSeen.get(id) ?? 0;
+          if (Date.now() - lastSeen < 18_000) return;
+          const p = participants.get(id);
+          if (p && p.connected) {
+            p.connected = false;
+            broadcastSnapshot();
+          }
+        }, 12_000);
       }
     });
   });
+
+  // Periodic stale presence sweep (marks silent HTTP-only students offline after 30s)
+  const presenceSweep = setInterval(() => {
+    const now = Date.now();
+    let changed = false;
+    for (const [pid, p] of participants.entries()) {
+      if (!p.connected) continue;
+      let hasActiveWs = false;
+      for (const [sock, sid] of socketToParticipantId.entries()) {
+        if (sid === pid && sock.readyState === WebSocket.OPEN) {
+          hasActiveWs = true;
+          break;
+        }
+      }
+      if (hasActiveWs) {
+        participantLastSeen.set(pid, now);
+        continue;
+      }
+      const lastSeen = participantLastSeen.get(pid) ?? p.joinedAt;
+      if (now - lastSeen > 30_000) {
+        p.connected = false;
+        changed = true;
+      }
+    }
+    if (changed) {
+      broadcastSnapshot();
+    }
+  }, 15_000);
+  wss.on('close', () => clearInterval(presenceSweep));
 
   const isProd = process.env.NODE_ENV === 'production';
   if (!isProd) {

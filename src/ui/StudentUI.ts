@@ -1253,7 +1253,7 @@ export class StudentUI {
             </div>
             <div class="flex items-center gap-1.5">
               <button id="btn-av-toggle-chat" class="btn-secondary text-xs relative">
-                ${this.avatarChatOpen ? 'Tutup Live Chat' : 'Live Chat'}
+                ${this.avatarChatOpen ? 'Tutup Forum Chat' : 'Forum Live Chat'}
                 <span id="av-chat-badge" class="${this.unreadChatCount > 0 && !this.avatarChatOpen ? '' : 'hidden'} ml-1 px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-bold text-[10px]">${this.unreadChatCount}</span>
               </button>
               <button id="btn-back-login" class="btn-secondary text-xs text-rose-300">Keluar</button>
@@ -1463,6 +1463,7 @@ export class StudentUI {
       this.avatarChatOpen = !this.avatarChatOpen;
       if (this.avatarChatOpen) this.unreadChatCount = 0;
       this.render();
+      if (this.avatarChatOpen) this.chatSidebar.focusInput();
     });
 
     this.container.querySelector('#btn-back-login')?.addEventListener('click', () => {
@@ -1579,7 +1580,7 @@ export class StudentUI {
               <button id="btn-open-materi" class="btn-primary text-xs py-2 px-3">Penguasaan Materi PAI</button>
               <button id="btn-edit-avatar" class="btn-secondary text-xs py-2 px-3">Ubah Avatar</button>
               <button id="btn-toggle-sy-chat" class="btn-secondary text-xs py-2 px-3 relative">
-                ${this.schoolyardChatOpen ? 'Tutup Live Chat' : 'Live Chat & Teman'}
+                ${this.schoolyardChatOpen ? 'Tutup Forum Chat' : 'Forum Live Chat'}
                 <span id="sy-chat-badge" class="${this.unreadChatCount > 0 && !this.schoolyardChatOpen ? '' : 'hidden'} ml-1 px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-bold text-[10px]">${this.unreadChatCount}</span>
               </button>
               <button id="btn-sy-mute" class="btn-secondary text-xs py-2 px-2.5">${soundFX.muted ? '🔇' : '🔊'}</button>
@@ -1861,6 +1862,7 @@ export class StudentUI {
       this.schoolyardChatOpen = !this.schoolyardChatOpen;
       if (this.schoolyardChatOpen) this.unreadChatCount = 0;
       this.render();
+      if (this.schoolyardChatOpen) this.chatSidebar.focusInput();
     });
 
     this.container.querySelector('#btn-edit-avatar')?.addEventListener('click', () => {
@@ -2108,7 +2110,7 @@ export class StudentUI {
                 ? 'bg-emerald-500 text-slate-950'
                 : 'text-slate-300 hover:text-white'
             }">
-              <span>Chat Kelas</span>
+              <span>Forum Chat</span>
               <span id="game-chat-badge" class="${this.unreadChatCount > 0 && this.gameSidebarTab !== 'chat' ? '' : 'hidden'} px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-950 text-[10px] font-bold">${this.unreadChatCount}</span>
             </button>
           </div>
@@ -2470,6 +2472,7 @@ export class StudentUI {
       this.gameSidebarTab = 'chat';
       this.unreadChatCount = 0;
       this.render();
+      this.chatSidebar.focusInput();
     });
 
     this.container.querySelector('#btn-toggle-lb')?.addEventListener('click', () => {

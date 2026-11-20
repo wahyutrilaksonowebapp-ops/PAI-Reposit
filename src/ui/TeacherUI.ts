@@ -246,6 +246,10 @@ export class TeacherUI {
     if (!this.mounted) return;
     const statusEl = this.container.querySelector<HTMLElement>('#teacher-rt-status');
     if (statusEl) {
+      const transport = realtimeClient.transportLabel;
+      statusEl.title = connected
+        ? `Koneksi realtime terintegrasi (${transport})`
+        : 'Menyambung ulang koneksi realtime...';
       statusEl.innerHTML = connected
         ? `<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span><span>Realtime Aktif</span>`
         : `<span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span><span>Menyambung…</span>`;
@@ -255,6 +259,7 @@ export class TeacherUI {
           : 'bg-amber-950/70 border-amber-400/40 text-amber-300'
       }`;
     }
+    this.updateHeaderCounters();
   }
 
   private generateRandomRoomCode(): string {
@@ -277,7 +282,12 @@ export class TeacherUI {
     const onlineCount = participants.filter((p) => p.connected).length;
     const onlineEl = this.container.querySelector<HTMLElement>('#teacher-online-count');
     if (onlineEl) {
-      onlineEl.innerHTML = `Peserta Online: <span class="text-emerald-400 tabular-nums font-bold">${onlineCount}</span> / ${participants.length}`;
+      const dotClass = this.isConnected
+        ? onlineCount > 0
+          ? 'bg-emerald-400 animate-pulse'
+          : 'bg-sky-400 animate-pulse'
+        : 'bg-amber-400 animate-pulse';
+      onlineEl.innerHTML = `<span class="w-2 h-2 rounded-full ${dotClass} shrink-0"></span><span>Peserta Online: <span class="text-emerald-400 tabular-nums font-bold">${onlineCount}</span> / ${participants.length}</span>`;
     }
     const codeDisp = this.container.querySelector<HTMLElement>('#teacher-room-code-display');
     if (codeDisp) {
@@ -352,8 +362,15 @@ export class TeacherUI {
               <button id="btn-toggle-edit-code" type="button" class="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] font-bold text-sky-300 cursor-pointer" title="Ubah Kode Ruang">Ubah</button>
             </div>
 
-            <div id="teacher-online-count" class="px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-600 text-xs font-semibold">
-              Peserta Online: <span class="text-emerald-400 tabular-nums font-bold">0</span> / 0
+            <div
+              id="teacher-online-count"
+              role="button"
+              tabindex="0"
+              title="Klik untuk menyegarkan & pantau daftar peserta realtime"
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700/90 border border-slate-600 hover:border-emerald-400/70 text-xs font-semibold cursor-pointer transition select-none"
+            >
+              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
+              <span>Peserta Online: <span class="text-emerald-400 tabular-nums font-bold">0</span> / 0</span>
             </div>
             <div class="px-3 py-1.5 rounded-lg bg-slate-800 border border-amber-400/50 text-xs font-semibold">
               Status Misi: <span id="teacher-mission-clock" class="text-amber-300 tabular-nums font-bold">MENUNGGU</span>
@@ -409,6 +426,38 @@ export class TeacherUI {
 
     this.container.querySelector('#btn-open-analytics-top')?.addEventListener('click', () => {
       this.openAnalyticsOverlay();
+    });
+
+    const syncAndFocusParticipants = () => {
+      soundFX.playClick();
+      void realtimeClient.forceSyncNow().then((snap) => {
+        const list = snap?.participants ?? this.snapshot?.participants ?? [];
+        const on = list.filter((p) => p.connected).length;
+        this.onToast(`Sinkronisasi realtime selesai · ${on} dari ${list.length} peserta sedang online.`);
+      });
+      if (this.activeTab !== 'misi') {
+        this.activeTab = 'misi';
+        this.persistTeacherSession();
+        this.renderNav();
+        this.renderMainContent();
+      }
+      requestAnimationFrame(() => {
+        const panel = this.container.querySelector<HTMLElement>('#teacher-participants-panel');
+        if (panel) {
+          panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          panel.classList.add('ring-2', 'ring-emerald-400');
+          setTimeout(() => panel.classList.remove('ring-2', 'ring-emerald-400'), 1400);
+        }
+      });
+    };
+
+    const onlineCountEl = this.container.querySelector<HTMLElement>('#teacher-online-count');
+    onlineCountEl?.addEventListener('click', syncAndFocusParticipants);
+    onlineCountEl?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        syncAndFocusParticipants();
+      }
     });
 
     this.container.querySelector('#btn-copy-room-code')?.addEventListener('click', () => {
@@ -687,19 +736,24 @@ export class TeacherUI {
         </section>
 
         <!-- Right 5 cols: Live Monitored Participants & Approval Controls -->
-        <section class="xl:col-span-5 bg-[#111c33] border border-slate-700 rounded-2xl p-4 flex flex-col">
+        <section id="teacher-participants-panel" class="xl:col-span-5 bg-[#111c33] border border-slate-700 rounded-2xl p-4 flex flex-col transition">
           <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
             <div>
               <h2 class="font-display font-bold text-base text-emerald-300">
                 Pemantauan Peserta (${participants.length})
               </h2>
-              <div class="text-[11px] text-slate-400">Siap Misi: ${readyCount} · Sinkronisasi Real-Time</div>
+              <div class="text-[11px] text-slate-400">Online: ${participants.filter((p) => p.connected).length} · Siap Misi: ${readyCount} · Realtime</div>
             </div>
-            ${
-              waitingApproval.length > 0
-                ? `<button id="btn-approve-all" class="btn-gold text-[11px] py-1.5 px-3">Setujui Semua (${waitingApproval.length})</button>`
-                : ''
-            }
+            <div class="flex items-center gap-1.5">
+              <button id="btn-refresh-participants" type="button" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[11px] font-semibold text-sky-300 cursor-pointer transition">
+                Segarkan
+              </button>
+              ${
+                waitingApproval.length > 0
+                  ? `<button id="btn-approve-all" class="btn-gold text-[11px] py-1.5 px-3">Setujui Semua (${waitingApproval.length})</button>`
+                  : ''
+              }
+            </div>
           </div>
 
           ${
@@ -1241,7 +1295,16 @@ export class TeacherUI {
       this.onToast('Sesi skor & peserta offline dibersihkan.');
     });
 
-    // Approval & moderation buttons in participant cards
+    // Refresh & Approval & moderation buttons in participant cards
+    main.querySelector('#btn-refresh-participants')?.addEventListener('click', () => {
+      soundFX.playClick();
+      void realtimeClient.forceSyncNow().then((snap) => {
+        const list = snap?.participants ?? this.snapshot?.participants ?? [];
+        const on = list.filter((p) => p.connected).length;
+        this.onToast(`Daftar peserta disegarkan · ${on} online dari ${list.length} peserta.`);
+      });
+    });
+
     main.querySelector('#btn-approve-all')?.addEventListener('click', () => {
       soundFX.playLevelUp();
       realtimeClient.approveAllStudents();

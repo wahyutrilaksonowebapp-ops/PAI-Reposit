@@ -47,17 +47,129 @@ type Listener<K extends keyof RealtimeEventMap> = (payload: RealtimeEventMap[K])
 
 export class RealtimeClient {
   private ws: WebSocket | null = null;
+  private sse: EventSource | null = null;
+  private channel: BroadcastChannel | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private sseReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private studentHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private fallbackPollTimer: ReturnType<typeof setInterval> | null = null;
+  private channelSyncDebounce: ReturnType<typeof setTimeout> | null = null;
   private listeners = new Map<keyof RealtimeEventMap, Set<Listener<never>>>();
   private lastJoinPayload: Record<string, unknown> | null = null;
   private lastTeacherLogin: { code: string; sekolah: string; roomCode: string } | null = null;
   private pendingQueue: Record<string, unknown>[] = [];
+
+  private wsConnected = false;
+  private sseConnected = false;
+  private seenChatIds = new Set<string>();
+  private seenLoginKeys = new Set<string>();
+  private seenApprovalKeys = new Set<string>();
+  private lastMissionStartedAt: number | null = null;
+  private initialSeedDone = false;
+
   public connected = false;
   public snapshot: RoomSnapshot | null = null;
 
+  get transportLabel(): string {
+    if (this.wsConnected && this.sseConnected) return 'WS+SSE';
+    if (this.wsConnected) return 'WS';
+    if (this.sseConnected) return 'SSE';
+    return 'Offline';
+  }
+
   connect(): void {
+    this.initBroadcastChannel();
+    this.connectSSE();
+    this.connectWebSocket();
+  }
+
+  private updateConnectionState(): void {
+    const next = this.wsConnected || this.sseConnected;
+    if (next) {
+      this.stopFallbackPolling();
+    } else {
+      this.startFallbackPolling();
+    }
+    if (next !== this.connected) {
+      this.connected = next;
+      this.emit('connectionChange', next);
+    }
+  }
+
+  private initBroadcastChannel(): void {
+    if (this.channel || typeof BroadcastChannel === 'undefined') return;
+    try {
+      this.channel = new BroadcastChannel('pai_nusantara_rt');
+      this.channel.onmessage = () => {
+        if (this.channelSyncDebounce) return;
+        this.channelSyncDebounce = setTimeout(() => {
+          this.channelSyncDebounce = null;
+          void this.fetchInitialState();
+        }, 120);
+      };
+    } catch {
+      this.channel = null;
+    }
+  }
+
+  private notifySiblingTabs(): void {
+    try {
+      this.channel?.postMessage({ type: 'sync', ts: Date.now() });
+    } catch {
+      // Ignore BroadcastChannel posting errors in restricted frames
+    }
+  }
+
+  private connectSSE(): void {
+    if (typeof EventSource === 'undefined') return;
+    if (
+      this.sse &&
+      (this.sse.readyState === EventSource.OPEN || this.sse.readyState === EventSource.CONNECTING)
+    ) {
+      return;
+    }
+
+    try {
+      const es = new EventSource('/api/events');
+      this.sse = es;
+
+      es.onopen = () => {
+        this.sseConnected = true;
+        this.updateConnectionState();
+      };
+
+      es.onmessage = (ev) => {
+        this.sseConnected = true;
+        this.updateConnectionState();
+        let data: Record<string, unknown>;
+        try {
+          data = JSON.parse(String(ev.data)) as Record<string, unknown>;
+        } catch {
+          return;
+        }
+        this.handleIncomingMessage(data);
+      };
+
+      es.onerror = () => {
+        this.sseConnected = false;
+        this.updateConnectionState();
+        es.close();
+        if (this.sse === es) this.sse = null;
+        if (!this.sseReconnectTimer) {
+          this.sseReconnectTimer = setTimeout(() => {
+            this.sseReconnectTimer = null;
+            this.connectSSE();
+          }, 2500);
+        }
+      };
+    } catch {
+      this.sseConnected = false;
+      this.updateConnectionState();
+    }
+  }
+
+  private connectWebSocket(): void {
     if (
       this.ws &&
       (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)
@@ -71,16 +183,16 @@ export class RealtimeClient {
     try {
       this.ws = new WebSocket(wsUrl);
     } catch {
-      this.startFallbackPolling();
+      this.wsConnected = false;
+      this.updateConnectionState();
       this.scheduleReconnect();
       return;
     }
 
     this.ws.addEventListener('open', () => {
-      this.connected = true;
-      this.stopFallbackPolling();
+      this.wsConnected = true;
       this.startHeartbeat();
-      this.emit('connectionChange', true);
+      this.updateConnectionState();
 
       if (this.lastTeacherLogin) {
         this.sendImmediate({
@@ -110,134 +222,183 @@ export class RealtimeClient {
       } catch {
         return;
       }
-
-      if (data.snapshot) {
-        this.snapshot = data.snapshot as RoomSnapshot;
-      }
-
-      switch (data.type) {
-        case 'ws:pong':
-          break;
-        case 'room:snapshot':
-          if (this.snapshot) this.emit('snapshot', this.snapshot);
-          break;
-        case 'student:joined':
-          if (this.snapshot) {
-            const joinedId = String(data.id);
-            if (this.lastJoinPayload) {
-              this.lastJoinPayload = { ...this.lastJoinPayload, id: joinedId };
-            }
-            this.emit('joined', { id: joinedId, snapshot: this.snapshot });
-            this.emit('snapshot', this.snapshot);
-          }
-          break;
-        case 'student:join_error':
-          this.lastJoinPayload = null;
-          this.emit('joinError', String(data.error || 'Kode Ruang tidak cocok.'));
-          break;
-        case 'student:logged_in':
-          if (this.snapshot && data.participant) {
-            this.emit('studentLoggedIn', {
-              participant: data.participant as ParticipantState,
-              isNew: Boolean(data.isNew),
-              snapshot: this.snapshot,
-            });
-            this.emit('snapshot', this.snapshot);
-          }
-          break;
-        case 'teacher:auth':
-          if (!data.ok) {
-            this.lastTeacherLogin = null;
-          }
-          this.emit('teacherAuth', {
-            ok: Boolean(data.ok),
-            sekolah: typeof data.sekolah === 'string' ? data.sekolah : undefined,
-            roomCode: typeof data.roomCode === 'string' ? data.roomCode : undefined,
-            error: typeof data.error === 'string' ? data.error : undefined,
-            snapshot: this.snapshot ?? undefined,
-          });
-          break;
-        case 'mission:started':
-          if (this.snapshot) {
-            this.emit('missionStarted', this.snapshot);
-            this.emit('snapshot', this.snapshot);
-          }
-          break;
-        case 'mission:ended':
-          if (this.snapshot) {
-            this.emit('missionEnded', {
-              reason: String(data.reason || 'teacher'),
-              snapshot: this.snapshot,
-            });
-            this.emit('snapshot', this.snapshot);
-          }
-          break;
-        case 'student:approved':
-          if (this.snapshot) {
-            this.emit('studentApproved', {
-              participantId: String(data.participantId || ''),
-              snapshot: this.snapshot,
-            });
-            this.emit('snapshot', this.snapshot);
-          }
-          break;
-        case 'player:moved':
-          this.emit('playerMoved', {
-            id: String(data.id),
-            pos: data.pos as { x: number; y: number; z: number },
-            rotY: typeof data.rotY === 'number' ? data.rotY : 0,
-          });
-          break;
-        case 'buff:attacked':
-          if (this.snapshot) {
-            this.emit('buffAttacked', {
-              attackerName: String(data.attackerName),
-              targetId: String(data.targetId),
-              targetName: String(data.targetName),
-              amount: Number(data.amount),
-              snapshot: this.snapshot,
-            });
-            this.emit('snapshot', this.snapshot);
-          }
-          break;
-        case 'chat:message':
-          if (this.snapshot && data.message) {
-            this.emit('chatMessage', {
-              message: data.message as ChatMessage,
-              snapshot: this.snapshot,
-            });
-            this.emit('snapshot', this.snapshot);
-          }
-          break;
-        case 'chat:typing':
-          if (typeof data.senderName === 'string') {
-            this.emit('chatTyping', {
-              senderId: String(data.senderId || ''),
-              senderName: data.senderName,
-              role: data.role === 'teacher' ? 'teacher' : 'student',
-            });
-          }
-          break;
-        case 'chat:rejected':
-          this.emit('chatRejected', String(data.reason || 'Pesan tidak dapat dikirim.'));
-          break;
-        case 'reflection:saved':
-          if (data.item) this.emit('reflectionSaved', data.item as TestimonialItem);
-          break;
-      }
+      this.handleIncomingMessage(data);
     });
 
     this.ws.addEventListener('close', () => {
-      this.connected = false;
+      this.wsConnected = false;
       this.stopHeartbeat();
-      this.startFallbackPolling();
-      this.emit('connectionChange', false);
+      this.updateConnectionState();
       this.scheduleReconnect();
     });
 
     this.ws.addEventListener('error', () => {
       this.ws?.close();
     });
+  }
+
+  private recordBounded(set: Set<string>, key: string, max = 220): boolean {
+    if (set.has(key)) return false;
+    set.add(key);
+    if (set.size > max) {
+      const oldest = set.values().next().value;
+      if (oldest !== undefined) set.delete(oldest);
+    }
+    return true;
+  }
+
+  private seedSeenFromSnapshot(snap: RoomSnapshot): void {
+    if (this.initialSeedDone) return;
+    this.initialSeedDone = true;
+    for (const m of snap.chatMessages) {
+      this.recordBounded(this.seenChatIds, m.id);
+    }
+    for (const p of snap.participants) {
+      if (p.connected) {
+        this.recordBounded(this.seenLoginKeys, `${p.id}:${p.joinedAt}`);
+      }
+    }
+    if (snap.mission.startedAt) {
+      this.lastMissionStartedAt = snap.mission.startedAt;
+    }
+  }
+
+  private handleIncomingMessage(data: Record<string, unknown>): void {
+    if (data.snapshot) {
+      const snap = data.snapshot as RoomSnapshot;
+      if (!this.initialSeedDone) {
+        this.seedSeenFromSnapshot(snap);
+      }
+      this.snapshot = snap;
+    }
+
+    switch (data.type) {
+      case 'ws:pong':
+        break;
+      case 'room:snapshot':
+        if (this.snapshot) this.emit('snapshot', this.snapshot);
+        break;
+      case 'student:joined':
+        if (this.snapshot) {
+          const joinedId = String(data.id);
+          if (this.lastJoinPayload) {
+            this.lastJoinPayload = { ...this.lastJoinPayload, id: joinedId };
+          }
+          this.startStudentHeartbeat();
+          this.emit('joined', { id: joinedId, snapshot: this.snapshot });
+          this.emit('snapshot', this.snapshot);
+        }
+        break;
+      case 'student:join_error':
+        this.lastJoinPayload = null;
+        this.stopStudentHeartbeat();
+        this.emit('joinError', String(data.error || 'Kode Ruang tidak cocok.'));
+        break;
+      case 'student:logged_in':
+        if (this.snapshot && data.participant) {
+          const participant = data.participant as ParticipantState;
+          const key = `${participant.id}:${participant.joinedAt}`;
+          if (this.recordBounded(this.seenLoginKeys, key)) {
+            this.emit('studentLoggedIn', {
+              participant,
+              isNew: Boolean(data.isNew),
+              snapshot: this.snapshot,
+            });
+          }
+          this.emit('snapshot', this.snapshot);
+        }
+        break;
+      case 'teacher:auth':
+        if (!data.ok) {
+          this.lastTeacherLogin = null;
+        }
+        this.emit('teacherAuth', {
+          ok: Boolean(data.ok),
+          sekolah: typeof data.sekolah === 'string' ? data.sekolah : undefined,
+          roomCode: typeof data.roomCode === 'string' ? data.roomCode : undefined,
+          error: typeof data.error === 'string' ? data.error : undefined,
+          snapshot: this.snapshot ?? undefined,
+        });
+        break;
+      case 'mission:started':
+        if (this.snapshot) {
+          const startedAt = this.snapshot.mission.startedAt;
+          if (!startedAt || startedAt !== this.lastMissionStartedAt) {
+            this.lastMissionStartedAt = startedAt;
+            this.emit('missionStarted', this.snapshot);
+          }
+          this.emit('snapshot', this.snapshot);
+        }
+        break;
+      case 'mission:ended':
+        if (this.snapshot) {
+          this.emit('missionEnded', {
+            reason: String(data.reason || 'teacher'),
+            snapshot: this.snapshot,
+          });
+          this.emit('snapshot', this.snapshot);
+        }
+        break;
+      case 'student:approved':
+        if (this.snapshot) {
+          const participantId = String(data.participantId || '');
+          const approvalKey = `${participantId}:${this.snapshot.mission.startedAt ?? 0}`;
+          if (this.recordBounded(this.seenApprovalKeys, approvalKey)) {
+            this.emit('studentApproved', {
+              participantId,
+              snapshot: this.snapshot,
+            });
+          }
+          this.emit('snapshot', this.snapshot);
+        }
+        break;
+      case 'player:moved':
+        this.emit('playerMoved', {
+          id: String(data.id),
+          pos: data.pos as { x: number; y: number; z: number },
+          rotY: typeof data.rotY === 'number' ? data.rotY : 0,
+        });
+        break;
+      case 'buff:attacked':
+        if (this.snapshot) {
+          this.emit('buffAttacked', {
+            attackerName: String(data.attackerName),
+            targetId: String(data.targetId),
+            targetName: String(data.targetName),
+            amount: Number(data.amount),
+            snapshot: this.snapshot,
+          });
+          this.emit('snapshot', this.snapshot);
+        }
+        break;
+      case 'chat:message':
+        if (this.snapshot && data.message) {
+          const message = data.message as ChatMessage;
+          if (this.recordBounded(this.seenChatIds, message.id)) {
+            this.emit('chatMessage', {
+              message,
+              snapshot: this.snapshot,
+            });
+          }
+          this.emit('snapshot', this.snapshot);
+        }
+        break;
+      case 'chat:typing':
+        if (typeof data.senderName === 'string') {
+          this.emit('chatTyping', {
+            senderId: String(data.senderId || ''),
+            senderName: data.senderName,
+            role: data.role === 'teacher' ? 'teacher' : 'student',
+          });
+        }
+        break;
+      case 'chat:rejected':
+        this.emit('chatRejected', String(data.reason || 'Pesan tidak dapat dikirim.'));
+        break;
+      case 'reflection:saved':
+        if (data.item) this.emit('reflectionSaved', data.item as TestimonialItem);
+        break;
+    }
   }
 
   private startHeartbeat(): void {
@@ -256,13 +417,34 @@ export class RealtimeClient {
     }
   }
 
+  private startStudentHeartbeat(): void {
+    if (this.studentHeartbeatTimer) return;
+    this.studentHeartbeatTimer = setInterval(() => {
+      const id = this.lastJoinPayload?.id;
+      if (typeof id !== 'string' || !id) return;
+      void fetch('/api/student/heartbeat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+        keepalive: true,
+      }).catch(() => {});
+    }, 8_000);
+  }
+
+  private stopStudentHeartbeat(): void {
+    if (this.studentHeartbeatTimer) {
+      clearInterval(this.studentHeartbeatTimer);
+      this.studentHeartbeatTimer = null;
+    }
+  }
+
   private startFallbackPolling(): void {
     if (this.fallbackPollTimer) return;
     this.fallbackPollTimer = setInterval(() => {
       if (!this.connected) {
         void this.fetchInitialState();
       }
-    }, 2500);
+    }, 2200);
   }
 
   private stopFallbackPolling(): void {
@@ -276,7 +458,7 @@ export class RealtimeClient {
     if (this.reconnectTimer) return;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      this.connect();
+      this.connectWebSocket();
     }, 1800);
   }
 
@@ -304,10 +486,76 @@ export class RealtimeClient {
     }
   }
 
+  private isActionMirroredViaHttp(type: string): boolean {
+    return (
+      type.startsWith('teacher:') ||
+      type.startsWith('chat:') ||
+      type === 'student:update_avatar' ||
+      type === 'student:update_activity' ||
+      type === 'student:set_ready' ||
+      type === 'student:move' ||
+      type === 'student:sync_progress' ||
+      type === 'student:attack_player' ||
+      type === 'student:submit_reflection'
+    );
+  }
+
   private send(payload: Record<string, unknown>, queueIfOffline = true): void {
+    const type = String(payload.type || '');
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(payload));
-    } else if (queueIfOffline) {
+      if (type !== 'student:move' && type !== 'ws:ping') {
+        this.notifySiblingTabs();
+      }
+      return;
+    }
+
+    // Immediate HTTPS action mirror when WS is unavailable or reconnecting
+    if (this.isActionMirroredViaHttp(type) && type !== 'teacher:login') {
+      const body: Record<string, unknown> = { ...payload };
+      if (
+        (type.startsWith('teacher:') ||
+          type === 'chat:delete' ||
+          type === 'chat:pin' ||
+          type === 'chat:toggle_mute_all' ||
+          type === 'chat:toggle_mute_student') &&
+        this.lastTeacherLogin?.code
+      ) {
+        body.adminCode = this.lastTeacherLogin.code;
+      }
+
+      void fetch('/api/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+        .then(async (res) => {
+          if (!res.ok) return;
+          const json = (await res.json()) as {
+            ok?: boolean;
+            snapshot?: RoomSnapshot;
+            item?: TestimonialItem;
+          };
+          if (json.snapshot) {
+            this.applyPulledSnapshot(json.snapshot);
+          }
+          if (json.item) {
+            this.emit('reflectionSaved', json.item);
+          }
+          if (type !== 'student:move') {
+            this.notifySiblingTabs();
+          }
+        })
+        .catch(() => {
+          if (queueIfOffline) {
+            this.pendingQueue.push(payload);
+            if (this.pendingQueue.length > 30) this.pendingQueue.shift();
+          }
+        });
+      return;
+    }
+
+    if (queueIfOffline) {
       this.pendingQueue.push(payload);
       if (this.pendingQueue.length > 30) {
         this.pendingQueue.shift();
@@ -315,17 +563,59 @@ export class RealtimeClient {
     }
   }
 
+  private applyPulledSnapshot(snap: RoomSnapshot): void {
+    const prev = this.snapshot;
+    if (!this.initialSeedDone) {
+      this.seedSeenFromSnapshot(snap);
+      this.snapshot = snap;
+      this.emit('snapshot', snap);
+      return;
+    }
+
+    this.snapshot = snap;
+
+    if (prev) {
+      const prevMap = new Map(prev.participants.map((p) => [p.id, p]));
+      for (const p of snap.participants) {
+        const old = prevMap.get(p.id);
+        if (p.connected && (!old || !old.connected)) {
+          const key = `${p.id}:${p.joinedAt}`;
+          if (this.recordBounded(this.seenLoginKeys, key)) {
+            this.emit('studentLoggedIn', {
+              participant: p,
+              isNew: !old,
+              snapshot: snap,
+            });
+          }
+        }
+      }
+
+      for (const m of snap.chatMessages) {
+        if (!m.deleted && this.recordBounded(this.seenChatIds, m.id)) {
+          this.emit('chatMessage', { message: m, snapshot: snap });
+        }
+      }
+    }
+
+    this.emit('snapshot', snap);
+  }
+
   async fetchInitialState(): Promise<RoomSnapshot | null> {
     try {
       const res = await fetch('/api/state', { cache: 'no-store' });
       if (!res.ok) return null;
       const snap = (await res.json()) as RoomSnapshot;
-      this.snapshot = snap;
-      this.emit('snapshot', snap);
+      this.applyPulledSnapshot(snap);
       return snap;
     } catch {
       return null;
     }
+  }
+
+  async forceSyncNow(): Promise<RoomSnapshot | null> {
+    if (!this.wsConnected) this.connectWebSocket();
+    if (!this.sseConnected) this.connectSSE();
+    return this.fetchInitialState();
   }
 
   async joinStudent(payload: {
@@ -363,12 +653,14 @@ export class RealtimeClient {
 
       const resolvedId = json.id || payload.id;
       this.lastJoinPayload = { ...msg, id: resolvedId };
+      this.startStudentHeartbeat();
       if (json.snapshot) {
         this.snapshot = json.snapshot;
       }
 
       // Bind this WebSocket connection to the participant ID too
       this.send(this.lastJoinPayload, true);
+      this.notifySiblingTabs();
 
       if (resolvedId && json.snapshot) {
         this.emit('joined', { id: resolvedId, snapshot: json.snapshot });
@@ -378,6 +670,7 @@ export class RealtimeClient {
     } catch {
       // Fallback to WS-only if fetch failed transiently
       this.lastJoinPayload = msg;
+      this.startStudentHeartbeat();
       this.send(msg, true);
       return { ok: true, id: payload.id, snapshot: this.snapshot ?? undefined };
     }
@@ -386,6 +679,7 @@ export class RealtimeClient {
   leaveStudent(id?: string | null): void {
     const targetId = id || (this.lastJoinPayload?.id as string | undefined);
     this.lastJoinPayload = null;
+    this.stopStudentHeartbeat();
     if (!targetId) return;
     this.send({ type: 'student:leave', id: targetId }, false);
     void fetch('/api/student/leave', {
@@ -393,11 +687,14 @@ export class RealtimeClient {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: targetId }),
       keepalive: true,
-    }).catch(() => {});
+    })
+      .then(() => this.notifySiblingTabs())
+      .catch(() => {});
   }
 
   clearStudentSession(): void {
     this.lastJoinPayload = null;
+    this.stopStudentHeartbeat();
   }
 
   updateAvatar(id: string, avatar: AvatarConfig, activity?: ParticipantActivity): void {
@@ -471,10 +768,11 @@ export class RealtimeClient {
   }): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type: 'chat:send', ...payload }));
+      this.notifySiblingTabs();
       return;
     }
 
-    // Immediate HTTP fallback if WS is reconnecting so virtual chat never drops
+    // Immediate HTTP fallback if WS is reconnecting so virtual forum chat never drops
     void fetch('/api/chat/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -493,11 +791,12 @@ export class RealtimeClient {
         }
         if (json.snapshot) {
           this.snapshot = json.snapshot;
-          if (json.message) {
+          if (json.message && this.recordBounded(this.seenChatIds, json.message.id)) {
             this.emit('chatMessage', { message: json.message, snapshot: json.snapshot });
           }
           this.emit('snapshot', json.snapshot);
         }
+        this.notifySiblingTabs();
       })
       .catch(() => {
         this.emit('chatRejected', 'Koneksi terputus. Pesan gagal terkirim, coba lagi.');
@@ -556,8 +855,9 @@ export class RealtimeClient {
         return { ok: false, error: json.error || 'Kode guru tidak valid.' };
       }
       if (json.snapshot) {
-        this.snapshot = json.snapshot;
+        this.applyPulledSnapshot(json.snapshot);
       }
+      this.notifySiblingTabs();
       return {
         ok: true,
         sekolah: json.sekolah || sekolah,

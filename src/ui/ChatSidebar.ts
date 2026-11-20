@@ -33,6 +33,9 @@ export class ChatSidebar {
   private options: ChatSidebarOptions;
   private snapshot: RoomSnapshot | null = null;
   private lastMessageCount = 0;
+  private lastListSig = '';
+  private lastPinnedSig = '';
+  private activeTypingSenderId = '';
   private typingClearTimer: ReturnType<typeof setTimeout> | null = null;
   private lastTypingEmitAt = 0;
 
@@ -47,6 +50,8 @@ export class ChatSidebar {
   mount(container: HTMLElement, snapshot: RoomSnapshot | null): void {
     this.root = container;
     this.snapshot = snapshot;
+    this.lastListSig = '';
+    this.lastPinnedSig = '';
     this.renderShell();
     this.updateMessages(snapshot, true);
   }
@@ -56,7 +61,17 @@ export class ChatSidebar {
       clearTimeout(this.typingClearTimer);
       this.typingClearTimer = null;
     }
+    this.lastListSig = '';
+    this.lastPinnedSig = '';
+    this.activeTypingSenderId = '';
     this.root = null;
+  }
+
+  focusInput(): void {
+    const inputEl = this.root?.querySelector<HTMLInputElement>('.js-chat-input');
+    if (inputEl && !inputEl.disabled) {
+      inputEl.focus();
+    }
   }
 
   showTyping(senderName: string, senderId: string): void {
@@ -65,13 +80,26 @@ export class ChatSidebar {
     if (this.options.role === 'teacher' && senderId === 'teacher_admin') return;
     const typingEl = this.root.querySelector<HTMLElement>('.js-chat-typing');
     if (!typingEl) return;
+    this.activeTypingSenderId = senderId;
     typingEl.textContent = `${senderName} sedang mengetik...`;
     typingEl.classList.remove('hidden');
     if (this.typingClearTimer) clearTimeout(this.typingClearTimer);
     this.typingClearTimer = setTimeout(() => {
+      this.clearTyping();
+    }, 2600);
+  }
+
+  private clearTyping(): void {
+    if (this.typingClearTimer) {
+      clearTimeout(this.typingClearTimer);
+      this.typingClearTimer = null;
+    }
+    this.activeTypingSenderId = '';
+    const typingEl = this.root?.querySelector<HTMLElement>('.js-chat-typing');
+    if (typingEl) {
       typingEl.classList.add('hidden');
       typingEl.textContent = '';
-    }, 2600);
+    }
   }
 
   updateMessages(snapshot: RoomSnapshot | null, forceScroll = false): void {
@@ -85,10 +113,17 @@ export class ChatSidebar {
       this.options.role === 'student' &&
       (chatMutedAll || (this.options.selfId ? mutedIds.has(this.options.selfId) : false));
 
+    const onlineCount = (snapshot?.participants ?? []).filter((p) => p.connected).length;
+
+    // Clear typing indicator immediately when that sender's message arrives
+    const latestMsg = messages[messages.length - 1];
+    if (latestMsg && this.activeTypingSenderId && latestMsg.senderId === this.activeTypingSenderId) {
+      this.clearTyping();
+    }
+
     // Update online count in chat header
     const onlineBadge = this.root.querySelector<HTMLElement>('.js-chat-online-count');
     if (onlineBadge) {
-      const onlineCount = (snapshot?.participants ?? []).filter((p) => p.connected).length;
       onlineBadge.textContent = `${onlineCount} Online`;
     }
 
@@ -103,10 +138,12 @@ export class ChatSidebar {
       }`;
     }
 
-    // Update pinned banner
+    // Update pinned banner (diffed to avoid button flicker)
     const pinSlot = this.root.querySelector<HTMLElement>('.js-chat-pinned');
     const pinnedMsg = messages.find((m) => m.pinned && !m.deleted);
-    if (pinSlot) {
+    const pinnedSig = pinnedMsg ? `${pinnedMsg.id}:${pinnedMsg.text}` : 'none';
+    if (pinSlot && (forceScroll || pinnedSig !== this.lastPinnedSig)) {
+      this.lastPinnedSig = pinnedSig;
       if (pinnedMsg) {
         pinSlot.classList.remove('hidden');
         pinSlot.innerHTML = `
@@ -129,21 +166,52 @@ export class ChatSidebar {
       }
     }
 
-    // Update message list
+    // Update message list (diffed so player movement / heartbeats never cause flicker or scroll jumps)
     const listEl = this.root.querySelector<HTMLElement>('.js-chat-list');
-    if (listEl) {
+    const mutedKey = Array.from(mutedIds).sort().join(',');
+    const listSig =
+      messages.length === 0
+        ? `empty:${onlineCount}:${selfMuted ? 1 : 0}:${this.options.role}`
+        : `${mutedKey}|` +
+          messages.map((m) => `${m.id}:${m.pinned ? 1 : 0}:${m.deleted ? 1 : 0}`).join(',');
+
+    if (listEl && (forceScroll || listSig !== this.lastListSig)) {
+      this.lastListSig = listSig;
       const wasAtBottom =
         forceScroll ||
         listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight < 60 ||
         messages.length !== this.lastMessageCount;
 
       if (messages.length === 0) {
+        const starterText =
+          this.options.role === 'teacher'
+            ? "Assalamu'alaikum anak-anak, silakan absen & sapa di forum kelas ya!"
+            : "Assalamu'alaikum Guru & teman-teman, saya sudah hadir!";
         listEl.innerHTML = `
-          <div class="text-center py-6 px-3 text-xs text-slate-400">
-            <div class="font-semibold text-slate-300 mb-1">Ruang Diskusi Aman PAI</div>
-            <div>Gunakan bahasa sopan dan santun. Pesan dilindungi filter otomatis & moderasi Guru.</div>
+          <div class="rounded-xl border border-slate-700/80 bg-slate-900/70 p-4 text-center space-y-2.5 my-2">
+            <div class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-950/90 border border-emerald-400/40 text-[10px] font-bold text-emerald-300">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span>Forum Kelas Aktif · ${onlineCount} Peserta Online</span>
+            </div>
+            <div class="font-display font-bold text-xs text-white">Ruang Diskusi Live Chat PAI</div>
+            <p class="text-[11px] text-slate-300 leading-relaxed">
+              Guru dan seluruh peserta di ruang kelas dapat langsung saling menyapa & berdiskusi secara realtime di sini.
+            </p>
+            ${
+              !selfMuted
+                ? `<button type="button" data-starter="${this.esc(starterText)}" class="js-chat-starter w-full px-3 py-2 rounded-xl bg-emerald-500/90 hover:bg-emerald-400 text-slate-950 font-bold text-[11px] cursor-pointer transition">
+                    Mulai Sapaan di Forum Kelas
+                  </button>`
+                : ''
+            }
           </div>
         `;
+        listEl.querySelector<HTMLButtonElement>('.js-chat-starter')?.addEventListener('click', (e) => {
+          const btn = e.currentTarget as HTMLButtonElement;
+          const text = btn.dataset.starter || starterText;
+          soundFX.playClick();
+          this.submitText(text, false);
+        });
       } else {
         listEl.innerHTML = messages.map((m) => this.renderMessageItem(m, mutedIds)).join('');
         this.bindMessageActionButtons(listEl);
@@ -282,22 +350,36 @@ export class ChatSidebar {
     });
     const senderMuted = mutedIds.has(m.senderId);
 
+    const initials = (m.senderName || 'P')
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() || '')
+      .join('') || 'P';
+
     return `
-      <div class="rounded-xl p-2 text-xs border ${
+      <div class="rounded-xl p-2.5 text-xs border ${
         isTeacherMsg
           ? 'bg-amber-950/45 border-amber-400/50'
           : isSelf
-            ? 'bg-emerald-950/45 border-emerald-400/40'
+            ? 'bg-emerald-950/45 border-emerald-400/45'
             : 'bg-slate-900/90 border-slate-700/80'
       }">
-        <div class="flex items-center justify-between gap-1.5 mb-0.5">
+        <div class="flex items-center justify-between gap-1.5 mb-1">
           <div class="flex items-center gap-1.5 min-w-0">
+            <span class="w-5 h-5 rounded-full text-[9px] font-bold flex items-center justify-center shrink-0 ${
+              isTeacherMsg
+                ? 'bg-amber-400 text-slate-950'
+                : isSelf
+                  ? 'bg-emerald-500 text-slate-950'
+                  : 'bg-sky-500/80 text-slate-950'
+            }">${this.esc(isTeacherMsg ? 'G' : initials)}</span>
             ${
               isTeacherMsg
                 ? `<span class="px-1.5 py-0.2 rounded bg-amber-400 text-slate-950 font-bold text-[9px] shrink-0">GURU</span>`
-                : ''
+                : `<span class="px-1.5 py-0.2 rounded bg-slate-800 text-sky-300 font-bold text-[9px] shrink-0">SISWA</span>`
             }
-            <span class="font-bold truncate ${isTeacherMsg ? 'text-amber-300' : 'text-sky-300'}">${this.esc(
+            <span class="font-bold truncate ${isTeacherMsg ? 'text-amber-300' : isSelf ? 'text-emerald-300' : 'text-sky-200'}">${this.esc(
               m.senderName
             )}</span>
             ${
@@ -309,11 +391,11 @@ export class ChatSidebar {
           <span class="text-[10px] text-slate-500 tabular-nums shrink-0">${time}</span>
         </div>
 
-        <p class="text-slate-100 leading-snug break-words whitespace-pre-wrap">${this.esc(m.text)}</p>
+        <p class="text-slate-100 leading-snug break-words whitespace-pre-wrap pl-6">${this.esc(m.text)}</p>
 
         ${
           this.options.role === 'teacher'
-            ? `<div class="mt-1.5 pt-1 border-t border-slate-800/80 flex flex-wrap items-center gap-1.5">
+            ? `<div class="mt-1.5 pt-1 pl-6 border-t border-slate-800/80 flex flex-wrap items-center gap-1.5">
                 <button type="button" data-pin-id="${m.id}" class="js-chat-pin text-[10px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 cursor-pointer">
                   ${m.pinned ? 'Lepas Pin' : 'Sematkan'}
                 </button>
