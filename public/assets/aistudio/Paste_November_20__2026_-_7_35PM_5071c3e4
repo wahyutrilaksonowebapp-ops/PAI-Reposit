@@ -1,0 +1,2080 @@
+buatkan minigame roblox dengan disertai quiz interaktif, game bisa digunanakan oleh banyak peserta dalam 1 link,
+mata pelajaran : Pendidikan Agama Islam dan Budi Pekerti
+Kelas : 1-6
+elemen PAI : Al Qur'an dan Hadis, Aqidah, Akhlak, Fiqih, Sejarah Peradaban Islam
+ 
+akun terdiri dari 2
+akun Peserta (murid)
+login dengan input nama murid / peserta dan nama sekolah
+setelah login peserta / murid:
+1. pemain login dengan mengisi nama pemain, dan asal sekolah.
+2. pemain membuat avatar setting seperti pilihan rambut, mata, hidung, mulut, kaos, celana, sepatu, tas (buat banyak pilihan agar peserta bisa menyesuaikan karakter)
+3. menunggu misi dari guru / admin, tombol mulai dilakukan oleh guru / admin
+4. diahir permainan siswa wajib memberikan refleksi, komentar, kritik dan saran yang akan tersimpan selamanya dan akan muncul di menu awal login sebagai menu testimoni, diberikan panel husus testimoni dengan text berjalan di dalam panel.
+akun guru (admin)
+login dengan input gpaibeji dan nama sekolah
+login guru / admin:
+1. setelah login guru disajikan dashboard yang berisi daftar peserta yang sedang bergabung menampilkan nama peserta, kelas, dan asal sekolah.
+2. menu selanjutnya "Misi" guru mengaktifkan misi dari 5 elemen (Qu'an Hadis, Aqidah, Akhlak, Fiqih, Sejarah Peradaban Islam), memilih game yang akan digunakan, mengaktifkan durasi waktu tiap soal, mengaktifkan durasi permainan 10-15 atau lebih.
+3. mencetak laporan analisis dalam bentuk excell.
+
+tampilan game
+fullscreen dengan proporsi menyesuaikan piranti yang digunakan (laptop, ifp, hp, dll)
+tampilan murid / peserta:
+panel atas 10% digunakan sebagai identitas, skor, rank, buff (jika ada).
+panel kiri 20% digunakan sebagai penyajian soal dan jawaban.
+panel tengah sampai ke kanan menampilkan game berjalan.
+
+Game 1: Puncak Nalar
+gambar / kondisi latar adalah pegunungan.
+cara bermain siswa:
+1. peserta berada di halaman sekolah menunggu pemain berkumpul dan memulai quiz interaktif.
+2. peserta menjawab quiz dengan memilih 1 dari 4 panel jawaban.
+3. jawaban salah maka peserta dan panel akan jatuh (efek animasi jatuh)
+4. jawaban benar maka peserta dan panel akan naik 1 tingkat (efek animasi panel naik)
+5. soal berbasis AKM, setiap soal memiliki waktu yang telah ditentukan, penilaian kognitif memahami, menerapkan, merefleksi sangat diutamakan, tingkat kesukaran menyesuaikan (jika peserta 2x salah, maka akan berada di level mudah, jika peserta 2x benar maka akan naik 1 level dari mudah menjadi sedaang, dan jika mampu menjawab soal level sedang 3x berturut maka akan dinaikkan menjadi level sulit, jika peserta berada di level soal sedang kemudian melakukan kesalahan sebanyak 3x akan diturunkan menjadi level mudah, jika peserta berada di level soal sulit kemudian melakukan kesalahan sebanyak 3x akan diturunkan di level sedang. jika peserta dapat menjawab 10x benar berturut maka akan diberikan buff berupa : 1. point 2x jika benar, jika salah -100, 2. point 1,5x jika benar, jika salah -50, 3. point tetap, memilih target pemail lain untuk dikurangi poin sebesar 150)
+6. peserta akan berkumpul di level yang sama, soal yang diberikan sesuai dengan level berada.
+panel atas berisi poin yang didapat dari menjawab soal (soal benar akan mendapat poin maksimal 100, sesuai dengan kecepatan menjawab. soal yang salah tidak mendapatkan poin), rank yang dicapai peserta, level soal.
+panel sebelah kiri soal yang disajikan dan jawaban untuk peserta mudah membaca (memilih jawaban tetap berdasarkan panel awal).
+
+game 2 : Sky Bridge Builder (Jembatan Langit Cahaya)
+- Konsep Visual & Avatar: Pemain mengendalikan avatar pelajar (bisa pilih karakter siswa laki-laki/perempuan berpakaian muslim/muslimah) di atas pulau-pulau melayang di langit. Untuk menyeberang ke pulau berikutnya, pemain harus membangun jembatan cahaya.
+- Mekanika Kuis Universal: Setiap keping jembatan yang hilang memicu munculnya panel soal di sisi kiri layar.
+  - PG: Memilih 1 dari 4 balok jembatan yang tepat.
+  - PGK: Mengaktifkan 2–3 tuas kristal secara bersamaan untuk mengangkat jembatan besar.
+  - B/S: Melompat ke pelat pijakan Hijau (Benar) atau Merah (Salah).
+
+game 3 : 3D Grand Prix Edu-Race (Balap Lintas Rintangan)
+- Konsep Visual & Avatar: Avatar mengendarai kendaraan futuristik ramah anak (seperti hoverboard atau mobil mini) di lintasan 3D berjalur (4 jalur A, B, C, D). Panel soal diletakkan rapi di sisi kiri layar sehingga lintasan tetap terlihat luas.
+- Mekanika Kuis Universal: Di depan lintasan terdapat gerbang energi bertuliskan opsi jawaban.
+  - PG: Mengarahkan avatar ke jalur gerbang yang benar untuk mendapat turbo boost.
+  - PGK: Mengumpulkan 2–3 bola energi bercahaya di sepanjang lintasan yang mewakili pernyataan benar sebelum melewati garis cek.
+  - B/S: Memilih jalur Kiri (Benar) atau Kanan (Salah) saat melewati persimpangan jalan.
+game 4 :  The Lost Scroll Maze (Labirin Gulungan Hikmah)
+- Konsep Visual & Avatar: Avatar menjelajahi labirin taman 3D dengan sudut pandang atas (isometric/third-person). Di beberapa persimpangan terdapat pintu gerbang terkunci dan peti harta karun.
+- Mekanika Kuis Universal: Mengklik peti atau penjaga gerbang akan memunculkan soal.
+  - PG & B/S: Membuka kunci gerbang utama menuju area berikutnya.
+  - PGK: Berfungsi sebagai "Kunci Brankas Utama" di akhir labirin—pemain harus mencentang kombinasi jawaban yang tepat untuk membuka peti emas dan mendapatkan kunci keluar.
+5. game :  Edu-Craft Island (Pulau Rakit Peradaban)
+- Konsep Visual & Avatar: Sebuah pulau 3D yang awalnya kosong. Avatar bertugas mengumpulkan sumber daya (kayu, batu, kristal) untuk membangun bangunan impian (masjid, perpustakaan, taman, pasar, atau jembatan).
+- Mekanika Kuis Universal: Setiap kali avatar mengetuk meja kerja (crafting table), muncul tantangan soal. Jawaban benar menghasilkan bahan bangunan dan langsung memunculkan objek 3D baru di pulau secara bertahap hingga pulau menjadi ramai dan indah.
+6. game : Portal Dimension Explorer (Penjelajah Portal Dimensi)
+- Konsep Visual & Avatar: Avatar berada di sebuah lobi pusat 3D yang memiliki 3 portal besar bercahaya berbeda warna: Portal Hijau (Level Mudah), Portal Biru (Level Sedang), dan Portal Emas (Level Sulit/Refleksi).
+- Mekanika Kuis Universal: Siswa bebas memilih portal tingkat kesulitan yang ingin ditaklukkan terlebih dahulu. Di dalam setiap dimensi, avatar harus mengumpulkan 5 bintang cahaya dengan menjawab soal PG, PGK, dan B/S untuk membuka portal kembali ke lobi utama.
+7. game : 3D Board Adventure (Petualangan Dadu Nusantara/Dunia)
+- Konsep Visual & Avatar: Papan permainan 3D raksasa berliku (seperti ular tangga modern) di atas meja raksasa atau taman kota. Avatar berjalan melompati petak-petak sesuai angka dadu 3D yang dilempar pemain.
+- Mekanika Kuis Universal: Setiap petak memiliki warna berbeda:
+  - Petak Biru: Soal Pilihan Ganda (PG).
+  - Petak Ungu: Soal Pilihan Ganda Kompleks (PGK) — hadiah langkah ekstra jika benar semua.
+  - Petak Kuning: Soal Kilat Benar/Salah (B/S).
+8. game : Astro-Scanner 3D (Penjelajah & Pemindai Artefak)
+- Konsep Visual & Avatar: Avatar memakai ransel jet (jetpack) ringan untuk melayang di sekitar ruangan museum futuristik atau taman terapung yang dipenuhi kapsul-kapsul melayang berisi simbol/artefak 3D.
+- Mekanika Kuis Universal: Pemain mendekati kapsul dan menekan tombol "Pindai (Scan)". Sistem akan menampilkan soal dari bank data. Jika jawaban benar, kapsul terbuka dan menampilkan lencana prestasi 3D yang mengorbit di sekitar avatar.
+9. game : Climb the Summit 3D (Pendaki Puncak Hikmah)
+- Konsep Visual & Avatar: Avatar mendaki gunung/bukit berundak yang indah (dari padang rumput di kaki gunung, melewati hutan pinus, awan, hingga puncak bercahaya).
+- Mekanika Kuis Universal: Pendakian dibagi menjadi beberapa pos (basecamp). Untuk naik dari satu pos ke pos berikutnya, pemain harus menyelesaikan paket berisi 3 soal campuran (1 PG, 1 PGK, 1 B/S). Jika gagal, avatar tetap aman di pos terakhir untuk mencoba lagi tanpa mengulang dari awal.
+
+kumpulan soal :
+MATERI 1: Q.S. Al-‘Asr dan Hukum Mim Sukun
+A. Tingkat Kesukaran: MUDAH (Level Kognitif: Mengetahui)
+1. 
+2.  (PG)
+Q.S. Al-‘Asr merupakan surah ke-103 dalam Al-Qur'an yang
+artinya ....
+A. Demi Matahari
+B. Demi Waktu
+C. Pertolongan
+D. Nikmat yang BanyakKunci: B
+2. (PG) Q.S. Al-‘Asr terdiri atas ... ayat dan tergolong
+surah ....
+A. 3 ayat – Makkiyah
+B. 3 ayat – Madaniyah
+C. 4 ayat – Makkiyah
+D. 5 ayat – MadaniyahKunci: A
+3. (PG) Berikut ini yang termasuk huruf hijaiyah yang tidak
+dapat disambung dengan huruf sesudahnya adalah ....
+A. ب، ت،
+ث
+B. ج، ح،
+خ
+C. ا، د،
+ذ، ر، ز، و
+D. س، ش،
+ص، ضKunci: C
+4. (PG) Hukum bacaan apabila huruf Mim Sukun ($\text{مْ}$)
+bertemu dengan huruf Ba ($\text{ب}$) disebut ....
+A. Izhar Syafawi
+B. Ikhfa Syafawi
+C. Idgham Mimi
+D. Idgham BighunnahKunci: B
+5. (PG) Dalam Q.S. Al-‘Asr, Allah Swt. menyatakan bahwa
+seluruh manusia berada dalam kerugian, kecuali mereka yang memiliki ... sifat
+utama.
+A. dua
+B. tiga
+C. empat
+D. limaKunci: C
+6. (PGK) Pilihlah dua pernyataan yang benar mengenai
+informasi umum Q.S. Al-‘Asr!
+- 
+-  [x]
+-      Diturunkan di Kota Makkah sebelum Nabi Muhammad saw. hijrah.
+- 
+-  [
+-      ] Diturunkan di Kota Madinah setelah peristiwa Fathu Makkah.
+- 
+-  [x]
+-      Ayat pertamanya diawali dengan sumpah Allah Swt. menggunakan kata
+-      Wal-‘Asr.
+- 
+-  [
+-      ] Membahas tentang kisah pasukan gajah yang menyerang Ka'bah.Kunci:
+-      Pernyataan 1 dan 3
+7. (PGK) Manakah di antara berikut ini yang merupakan
+pembagian hukum bacaan Mim Sukun ($\text{مْ}$)? (Pilih tiga jawaban)
+- 
+-  [x]
+-      Izhar Syafawi
+- 
+-  [
+-      ] Izhar Halqi
+- 
+-  [x]
+-      Ikhfa Syafawi
+- 
+-  [x]
+-      Idgham MimiKunci: Pernyataan 1, 3, dan 4
+8. (PGK) Berdasarkan Q.S. Al-‘Asr ayat 3, golongan orang
+yang tidak merugi adalah mereka yang .... (Pilih tiga jawaban)
+- 
+-  [x]
+-      Beriman kepada Allah Swt.
+- 
+-  [
+-      ] Mengumpulkan harta sebanyak-banyaknya.
+- 
+-  [x]
+-      Mengerjakan amal saleh.
+- 
+-  [x]
+-      Saling menasihati dalam kebenaran dan kesabaran.Kunci: Pernyataan 1, 3,
+-      dan 4
+9. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Cara membaca hukum bacaan Izhar Syafawi adalah dengan
+menyamarkan suara mim di bibir disertai dengung selama 2 harakat."
+Jawaban: Salah (Seharusnya dibaca jelas di bibir tanpa
+dengung).
+10. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Kata وَالْعَصْرِ
+(Wal-‘asr) tersusun dari 6 huruf hijaiyah, yaitu و - ا - ل - ع - ص - ر."
+Jawaban: Benar
+B. Tingkat Kesukaran: SEDANG (Level Kognitif: Menerapkan)
+11. (PG) Perhatikan rangkaian huruf berikut: ا - ل - إ - ن
+- س - ا - ن
+. Jika dirangkai menjadi satu kata dalam Q.S. Al-‘Asr ayat 2,
+penulisan yang tepat adalah ....
+A. الْاِنْسَانُ
+B. الْإِنْسَانَ
+C. إِنْسَانًا
+D. لِلْإِنْسَانِKunci:
+B
+12. (PG) Perhatikan potongan ayat berikut: تَرْمِيْهِمْ بِحِجَارَةٍ.
+Hukum bacaan pada lafaz yang bergaris bawah (Mim sukun bertemu Ba) adalah ....
+A. Idgham Mimi
+B. Izhar Syafawi
+C. Ikhfa Syafawi
+D. Ikhfa HaqiqiKunci: C
+13. (PG) Perhatikan potongan ayat dari Q.S. Quraisy berikut:أَطْعَمَهُمْ
+مِنْ جُوْعٍ. Cara membaca pertemuan huruf $\text{مْ}$ dan $\text{مِ}$ pada lafaz tersebut adalah ....
+A. dibaca jelas tanpa dengung
+B. dimasukkan ke huruf mim kedua dengan dengung 2 harakat
+C. dibaca memantul (qalqalah)
+D. dibaca samar di pangkal hidungKunci: B
+14. (PG) Fatimah melihat adiknya kesulitan mengerjakan PR
+Matematika. Fatimah segera membantu adiknya dengan sabar. Perilaku Fatimah
+mencerminkan penerapan Q.S. Al-‘Asr ayat 3, yaitu ....
+A. beramal saleh dan saling menasihati dalam kesabaran
+B. mencari pujian dari orang tua
+C. menghabiskan waktu untuk bermain
+D. menunda-nunda pekerjaan rumahKunci: A
+15. (PG) Kata الصَّالِحَاتِ pada Q.S. Al-‘Asr ayat 3 apabila diuraikan
+menjadi huruf-huruf tunggal yang terpisah adalah ....
+A. ا - ل
+- ص - ا - ل - ح - ا - ت
+B. ا - ل
+- ص - ل - ح - ا - ت
+C. ص - ا
+- ل - ح - ا - ت
+D. ا - ل
+- س - ا - ل - ح - ا - ت
+Kunci: A
+16. (PGK) Perhatikan lafaz-lafaz dari surah pendek berikut
+ini! Manakah yang mengandung hukum bacaan Izhar Syafawi? (Pilih dua jawaban)
+- 
+-  [x]
+-      أَلَمْ
+-      تَرَ كَيْفَ (Q.S. Al-Fil: 1)
+- 
+-  [
+-      ] أَطْعَمَهُمْ
+-      مِنْ جُوْعٍ (Q.S. Quraisy: 4)
+- 
+-  [x]
+-      لَكُمْ
+-      دِيْنُكُمْ (Q.S. Al-Kafirun: 6)
+- 
+-  [
+-      ] وَمَا
+-      هُمْ بِمُؤْمِنِيْنَ (Q.S. Al-Baqarah: 8)Kunci: Pernyataan
+-      1 dan 3
+17. (PGK) Cermati penulisan kata وَتَوَاصَوْا (Q.S. Al-‘Asr ayat
+3). Mengapa huruf-huruf dalam kata tersebut banyak yang ditulis terpisah?
+(Pilih dua alasan yang benar)
+- 
+-  [x]
+-      Karena terdapat huruf Wau ($\text{و}$) yang tidak
+-      bisa menyambung huruf sesudahnya.
+- 
+-  [x]
+-      Karena terdapat huruf Alif ($\text{ا}$) yang tidak
+-      bisa menyambung huruf sesudahnya.
+- 
+-  [ ]
+-      Karena huruf Ta ($\text{ت}$)
+-      dan Shad ($\text{ص}$)
+-      tidak bisa disambung di awal kata.
+- 
+-  [ ]
+-      Karena aturan penulisan Al-Qur'an melarang penyambungan kata kerja.Kunci:
+-      Pernyataan 1 dan 2
+18. (PGK) Berikut ini yang merupakan contoh penerapan pesan
+pokok Q.S. Al-‘Asr di lingkungan sekolah adalah .... (Pilih tiga jawaban)
+- 
+-  [x]
+-      Mengingatkan teman dengan sopan agar tidak menyontek saat ulangan.
+- 
+-  [x]
+-      Menggunakan jam istirahat untuk membaca buku di perpustakaan atau salat
+-      Duha.
+- 
+-  [
+-      ] Mengobrol dengan teman saat guru sedang menjelaskan pelajaran.
+- 
+-  [x]
+-      Bersabar dan tetap semangat berlatih meskipun tim kelas kalah dalam lomba
+-      kebersihan.Kunci: Pernyataan 1, 2, dan 4
+19. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Pada lafaz فَجَعَلَهُمْ كَعَصْفٍ مَأْكُوْلٍ (Q.S. Al-Fil: 5),
+terdapat dua hukum bacaan Mim Sukun, yaitu Izhar Syafawi pada kata فَجَعَلَهُمْ
+كَ dan Idgham Mimi pada kata كَعَصْفٍ مَأْكُوْلٍ."
+Jawaban: Salah (Pada كَعَصْفٍ مَأْكُوْلٍ adalah tanwin bertemu
+mim = Idgham Bighunnah, bukan Mim Sukun).
+20. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Huruf Mim ($\text{م}$) dalam kata بِالْمَرْحَمَةِ dapat disambung
+dengan huruf sebelum dan sesudahnya."
+Jawaban: Benar
+C. Tingkat Kesukaran: SULIT (Level Kognitif: Merefleksi
+& Mengevaluasi)
+21. (PG) Bacalah ilustrasi berikut!
+Raka selalu mendapat nilai 100 di kelas. Namun, ia sering
+mengejek temannya yang mendapat nilai rendah dan tidak mau membantu mereka
+belajar. Saat waktu salat tiba, Raka lebih memilih bermain game online hingga
+larut malam.
+Berdasarkan pesan pokok Q.S. Al-‘Asr, bagaimana evaluasi
+terhadap keadaan Raka?
+A. Raka termasuk orang yang beruntung karena prestasinya
+tinggi.
+B. Raka tetap merugi karena kepintarannya tidak disertai
+amal saleh, akhlak mulia, dan penghargaan terhadap waktu.
+C. Raka sudah mengamalkan ayat ke-2 karena ia rajin belajar
+untuk dirinya sendiri.
+D. Raka hanya perlu memperbaiki cara bermain gamenya tanpa
+perlu mengubah sikapnya kepada teman.
+Kunci: B
+22. (PG) Mengapa Allah Swt. menggunakan waktu (Al-‘Asr)
+sebagai sumpah di awal surah, bukan menggunakan benda berharga seperti emas
+atau permata?
+A. Karena waktu bisa dibeli kembali oleh orang yang kaya
+raya.
+B. Karena waktu yang telah berlalu tidak akan pernah kembali
+dan menjadi modal utama manusia beramal.
+C. Karena manusia lebih menyukai waktu daripada harta benda.
+D. Karena waktu hanya dimiliki oleh orang-orang yang
+beriman.Kunci: B
+23. (PG) Perhatikan ayat berikut: إِلَّا الَّذِيْنَ اٰمَنُوْا وَعَمِلُوا
+الصّٰلِحٰتِ وَتَوَاصَوْا بِالْحَقِّ ەۙ وَتَوَاصَوْا بِالصَّبْرِ.
+Mengapa dalam ayat tersebut perintah "saling menasihati
+dalam kebenaran" (tawashau bil-haq) selalu dirangkaikan dengan
+"saling menasihati dalam kesabaran" (tawashau bish-shabr)?
+A. Karena menegakkan kebenaran sering kali menghadapi
+tantangan dan penolakan sehingga membutuhkan kesabaran ekstra.
+B. Karena orang yang sabar tidak perlu lagi mengingatkan
+orang lain tentang kebenaran.
+C. Karena kebenaran hanya boleh disampaikan kepada
+orang-orang yang penyabar saja.
+D. Karena kesabaran lebih mudah dilakukan daripada berkata
+jujur.Kunci: A
+24. (PG) Seorang siswa menulis ulang ayat ke-2 Q.S. Al-‘Asr
+menjadi: اِنَّ
+ا لْاِ نْسَا نَ لَفِيْ خُسْرٍ. Kesalahan fatal dalam penulisan sambung
+tersebut terletak pada ....
+A. huruf alif dan nun pada kata inna tidak disambung
+B. huruf lam pada al-insana dipisah dengan huruf alif
+sesudahnya, serta huruf alif dipisah dengan nun di akhir kata
+C. huruf kha dan sin pada kata khusrin disambung
+D. huruf fa dan ya pada kata lafi disambungKunci: B
+25. (PG) Aisyah membaca Q.S. Al-Kafirun ayat 4: وَلَآ اَنَا۠
+عَابِدٌ مَّا عَبَدْتُّمْ. Ketika sampai pada akhir ayat (عَبَدْتُّمْ),
+ia mendengungkan suara mim sukun selama 2 harakat. Bagaimana penilaianmu
+terhadap bacaan Aisyah?
+A. Sudah tepat karena setiap mim sukun di akhir ayat harus
+didengungkan.
+B. Kurang tepat, seharusnya dibaca Izhar Syafawi (jelas
+tanpa dengung) karena mim sukun berada di akhir bacaan (waqaf) dan tidak
+bertemu mim atau ba.
+C. Kurang tepat, seharusnya dibaca Ikhfa Syafawi.
+D. Sudah tepat karena bertemu dengan huruf ta
+bertasydid.Kunci: B
+26. (PGK) Bacalah kasus berikut!
+Di kelas 5, beberapa siswa sering datang terlambat dan
+membuang sampah sembarangan. Budi sebagai ketua kelas ingin mengamalkan Q.S.
+Al-‘Asr ayat 3 untuk memperbaiki kondisi kelasnya.
+Tindakan reflektif dan solutif manakah yang tepat dilakukan
+Budi? (Pilih dua jawaban)
+[x] Mengajak teman-teman berdiskusi dengan bahasa yang
+santun mengenai pentingnya disiplin waktu dan kebersihan (tawashau bil-haq).
+
+- 
+-   
+- 
+-  [
+-      ] Memarahi teman-teman di depan kelas dengan kata-kata kasar agar mereka
+-      jera.
+- 
+-  [x]
+-      Memberi contoh datang lebih awal dan tetap sabar mengingatkan teman
+-      meskipun awalnya diabaikan (tawashau bish-shabr).
+- 
+-  [
+-      ] Melaporkan semua teman ke kepala sekolah agar langsung diberi hukuman
+-      berat.Kunci: Pernyataan 1 dan 3
+27. (PGK) Cermati pernyataan berikut terkait hubungan antara
+Iman dan Amal Saleh dalam Q.S. Al-‘Asr! Manakah kesimpulan yang paling tepat?
+(Pilih dua jawaban)
+- 
+-  [x]
+-      Iman tanpa amal saleh bagaikan pohon tanpa buah, belum cukup untuk
+-      menyelamatkan manusia dari kerugian.
+- 
+-  [x]
+-      Amal saleh yang dilakukan tanpa dilandasi keimanan kepada Allah Swt. tidak
+-      bernilai ibadah di sisi-Nya.
+- 
+-  [
+-      ] Seseorang yang sudah beriman tidak wajib lagi berbuat baik kepada sesama
+-      manusia.
+- 
+-  [
+-      ] Amal saleh saja sudah cukup membuat seseorang masuk surga meskipun tidak
+-      beriman.Kunci: Pernyataan 1 dan 2
+28. (PGK) Analisislah potongan Q.S. Al-Humazah ayat 8-9
+berikut: إِنَّهَا
+عَلَيْهِمْ مُّؤْصَدَةٌ ۙ فِيْ عَمَدٍ مُّمَدَّدَةٍ. Kesimpulan hukum
+tajwid yang benar dari ayat tersebut adalah .... (Pilih dua jawaban)
+- 
+-  [x]
+-      Terdapat hukum bacaan Idgham Mimi pada lafaz عَلَيْهِمْ مُّؤْصَدَةٌ
+-      karena mim sukun bertemu huruf mim.
+- 
+-  [
+-      ] Terdapat hukum bacaan Ikhfa Syafawi pada lafaz عَمَدٍ مُّمَدَّدَةٍ.
+- 
+-  [x]
+-      Cara membaca عَلَيْهِمْ
+-      مُّؤْصَدَةٌ harus disertai dengung (ghunnah) selama 2 harakat di
+-      bibir.
+- 
+-  [
+-      ] Terdapat hukum bacaan Izhar Syafawi pada akhir ayat ke-9.Kunci:
+-      Pernyataan 1 dan 3
+29. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Jika seseorang selalu sibuk bekerja dari pagi hingga
+malam untuk mencari nafkah halal, namun ia meninggalkan salat lima waktu karena
+alasan sibuk, maka menurut Q.S. Al-‘Asr ia tetap tergolong orang yang beruntung
+karena tidak menyia-nyiakan waktunya."
+Jawaban: Salah (Karena syarat utama terhindar dari kerugian
+dalam Q.S. Al-‘Asr adalah beriman dan beramal saleh, sedangkan meninggalkan
+salat adalah pelanggaran kewajiban iman).
+30. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Menasihati teman dengan cara mempermalukannya di media
+sosial bertentangan dengan nilai Q.S. Al-‘Asr karena tidak mencerminkan
+kesabaran dan kasih sayang dalam menyampaikan kebenaran."
+Jawaban: Benar
+MATERI 2: Asmaul Husna (Al-Halim, Asy-Syakur, Al-Hakim,
+Al-Wadud)
+A. Tingkat Kesukaran: MUDAH (Level Kognitif: Mengetahui)
+31. (PG) Asmaul Husna Al-Halim ($\text{الْحَلِيمُ}$) artinya Allah Maha
+....
+A. Bijaksana
+B. Penyantun
+C. Pengasih/Pencinta
+D. MensyukuriKunci: B
+32. (PG) Allah Swt. selalu membalas setiap amal kebaikan
+hamba-Nya dengan pahala yang berlipat ganda. Hal ini membuktikan bahwa Allah
+memiliki nama ....
+A. Asy-Syakur
+B. Al-Halim
+C. Al-Hakim
+D. Al-WadudKunci: A
+33. (PG) Arti dari Asmaul Husna Al-Hakim ($\text{الْحَكِيمُ}$)
+adalah ....
+A. Allah Maha Pencipta
+B. Allah Maha Bijaksana
+C. Allah Maha Melihat
+D. Allah Maha Pemberi RezekiKunci: B
+34. (PG) Asmaul Husna Al-Wadud ($\text{الْوَدُودُ}$) memiliki arti ....
+A. Allah Maha Penyantun
+B. Allah Maha Pengampun
+C. Allah Maha Pengasih/Pencinta
+D. Allah Maha AdilKunci: C
+35. (PG) Allah tidak langsung menurunkan azab kepada manusia
+yang berbuat dosa, melainkan memberi waktu agar mereka mau bertobat. Sifat ini
+sesuai dengan Asmaul Husna ....
+A. Al-Hakim
+B. Al-Halim
+C. Asy-Syakur
+D. Al-WadudKunci: B
+36. (PGK) Pasangkan dengan tepat antara Asmaul Husna dan
+artinya! Pilih dua pernyataan yang benar!
+- 
+-  [x]
+-      Al-Wadud artinya Maha Pencinta / Maha Pengasih.
+- 
+-  [
+-      ] Al-Halim artinya Maha Bijaksana.
+- 
+-  [x]
+-      Asy-Syakur artinya Maha Mensyukuri / Maha Pembalas Budi.
+- 
+-  [
+-      ] Al-Hakim artinya Maha Penyantun.Kunci: Pernyataan 1 dan 3
+37. (PGK) Manakah perilaku berikut yang mencerminkan
+keteladanan terhadap Asmaul Husna Asy-Syakur? (Pilih tiga jawaban)
+- 
+-  [x]
+-      Mengucapkan kalimat Alhamdulillah saat mendapat nikmat.
+- 
+-  [x]
+-      Berterima kasih kepada orang tua dan guru atas bimbingannya.
+- 
+-  [
+-      ] Mudah marah ketika keinginan tidak terpenuhi.
+- 
+-  [x]
+-      Menjaga kesehatan tubuh dengan makan makanan bergizi sebagai bentuk
+-      syukur.Kunci: Pernyataan 1, 2, dan 4
+38. (PGK) Contoh perilaku yang sesuai dengan Asmaul Husna
+Al-Wadud dalam kehidupan sehari-hari adalah .... (Pilih tiga jawaban)
+- 
+-  [x]
+-      Menyayangi adik dan menghormati kakak.
+- 
+-  [x]
+-      Menjenguk teman sekelas yang sedang sakit.
+- 
+-  [x]
+-      Membantu tetangga yang kesulitan tanpa mengharap imbalan.
+- 
+-  [ ]
+-      Memilih-milih teman hanya yang kaya saja.Kunci: Pernyataan 1, 2, dan 3
+39. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Asmaul Husna berjumlah 99 nama yang indah dan agung
+milik Allah Swt."
+Jawaban: Benar
+40. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Meneladani sifat Al-Halim berarti kita boleh
+membiarkan teman melakukan perbuatan salah terus-menerus tanpa
+menegurnya."
+Jawaban: Salah (Menegur dengan lembut dan santun adalah
+bagian dari sifat penyantun).
+B. Tingkat Kesukaran: SEDANG (Level Kognitif: Menerapkan)
+41. (PG) Saat sedang bermain bola di halaman sekolah,
+tendangan Dodi tidak sengaja mengenai gelas minum milik Arman hingga pecah.
+Dodi segera meminta maaf. Arman menahan amarahnya dan memaafkan Dodi dengan
+wajah tersenyum. Sikap Arman meneladani Asmaul Husna ....
+A. Al-Halim
+B. Al-Hakim
+C. Asy-Syakur
+D. Al-WadudKunci: A
+42. (PG) Sebagai ketua kelompok diskusi, Siti membagi tugas
+kepada semua anggota sesuai dengan kemampuan masing-masing secara adil sehingga
+tugas selesai tepat waktu. Tindakan Siti mencerminkan sifat ....
+A. Al-Wadud
+B. Al-Hakim
+C. Asy-Syakur
+D. Al-HalimKunci: B
+43. (PG) Perhatikan peristiwa berikut:
+Nenek memberi sepotong kue sederhana kepada Hasan. Hasan
+menerimanya dengan kedua tangan, mengucapkan terima kasih, dan memakan kue
+tersebut sampai habis tanpa menyisakannya.
+Perilaku Hasan menunjukkan bahwa ia telah menerapkan nilai
+Asmaul Husna ....
+A. Al-Halim
+B. Al-Hakim
+C. Asy-Syakur
+D. Al-Wadud
+Kunci: C
+44. (PG) Allah menciptakan siang untuk manusia bekerja dan
+malam untuk beristirahat. Semua ciptaan Allah memiliki tujuan dan manfaat yang
+sangat tepat. Hal ini merupakan bukti nyata dari sifat Allah ....
+A. Al-Halim
+B. Al-Hakim
+C. Al-Wadud
+D. Asy-SyakurKunci: B
+45. (PG) Di kelas 5 terdapat siswa baru yang berasal dari
+daerah lain dengan logat bahasa yang berbeda. Rani mengajak siswa baru tersebut
+berkenalan dan bermain bersama saat jam istirahat agar ia tidak merasa
+kesepian. Sikap Rani meneladani sifat ....
+A. Al-Wadud
+B. Al-Hakim
+C. Al-Halim
+D. Asy-SyakurKunci: A
+46. (PGK) Perhatikan situasi berikut!
+Tono melihat temannya lupa membawa pensil saat ulangan. Tono
+memiliki dua pensil di kotak pensilnya.
+Jika Tono ingin meneladani sifat Al-Wadud dan Asy-Syakur,
+tindakan apa yang seharusnya ia lakukan? (Pilih dua jawaban)
+- 
+-  [x]
+-      Meminjamkan satu pensilnya dengan tulus kepada temannya.
+- 
+-  [
+-      ] Menyembunyikan pensil cadangannya agar temannya mendapat nilai jelek.
+- 
+-  [x]
+-      Bersyukur kepada Allah karena masih diberi rezeki perlengkapan sekolah
+-      yang lengkap sehingga bisa membantu orang lain.
+- 
+-  [
+-      ] Meminjamkan pensil dengan syarat temannya harus membelikan jajan di
+-      kantin.Kunci: Pernyataan 1 dan 3
+47. (PGK) Manakah di antara peristiwa alam berikut yang
+menunjukkan bukti sifat Al-Hakim (Maha Bijaksana) Allah Swt.? (Pilih dua
+jawaban)
+- 
+-  [x]
+-      Pergantian musim hujan dan kemarau yang menjaga keseimbangan ekosistem
+-      bumi.
+- 
+-  [x]
+-      Letak mata, hidung, dan mulut manusia yang tersusun sangat serasi dan
+-      berfungsi sempurna.
+- 
+-  [
+-      ] Manusia yang menebang hutan secara liar hingga menyebabkan banjir.
+- 
+-  [
+-      ] Kendaraan bermotor yang menimbulkan polusi udara di perkotaan.Kunci:
+-      Pernyataan 1 dan 2
+48. (PGK) Bagaimana cara seorang siswa menerapkan sifat
+Al-Halim ketika diejek oleh temannya? (Pilih tiga jawaban)
+- 
+-  [x]
+-      Menahan diri untuk tidak membalas ejekan dengan kata-kata kasar.
+- 
+-  [x]
+-      Menasihati teman tersebut dengan suara lembut bahwa mengejek adalah
+-      perbuatan tercela.
+- 
+-  [
+-      ] Mengajak teman-teman lain untuk memusuhi anak yang mengejek tersebut.
+- 
+-  [x]
+-      Memaafkan kesalahannya apabila ia menyadari kekeliruannya.Kunci:
+-      Pernyataan 1, 2, dan 4
+49. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Menggunakan uang saku secara hemat dan menyisihkan
+sebagian untuk infak adalah bentuk penerapan nyata dari Asmaul Husna
+Asy-Syakur."
+Jawaban: Benar
+50. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Seorang anak yang meneladani sifat Al-Hakim akan
+selalu bertindak tergesa-gesa tanpa memikirkan akibat dari perbuatannya."
+Jawaban: Salah (Justru orang yang bijaksana selalu berpikir
+matang sebelum bertindak).
+C. Tingkat Kesukaran: SULIT (Level Kognitif: Merefleksi
+& Mengevaluasi)
+51. (PG) Bacalah kisah reflektif berikut!
+Fajar sering merasa kesal karena ia tidak dibelikan sepeda
+baru seperti teman-temannya, padahal sepedanya yang lama masih berfungsi dengan
+baik. Akibatnya, Fajar menjadi malas belajar dan sering cemberut kepada orang
+tuanya.
+Jika Fajar melakukan evaluasi diri (muhasabah) berdasarkan
+pemahamannya tentang Asmaul Husna Asy-Syakur dan Al-Hakim, sikap perbaikan apa
+yang harus ia ambil?
+A. Tetap mendesak orang tua agar segera membelikan sepeda
+baru bulan depan.
+B. Menyadari bahwa orang tua lebih bijaksana mengetahui
+kebutuhan keluarga, lalu mensyukuri sepeda yang ada dengan merawatnya.
+C. Meminjam sepeda teman setiap hari agar terlihat memiliki
+sepeda baru.
+D. Menyalahkan keadaan karena merasa tidak seberuntung
+teman-temannya.
+Kunci: B
+52. (PG) Mengapa sifat Al-Halim (Maha Penyantun) dan
+Al-Hakim (Maha Bijaksana) sangat dibutuhkan oleh seorang pemimpin atau ketua
+kelas?
+A. Agar ketua kelas ditakuti oleh semua anggota kelas
+sehingga tidak ada yang berani berbicara.
+B. Agar ketua kelas mampu mengendalikan emosi saat ada
+konflik dan dapat mengambil keputusan yang adil bagi semua pihak.
+C. Agar ketua kelas bisa membela teman dekatnya saja ketika
+terjadi perselisihan.
+D. Agar ketua kelas tidak perlu memberikan sanksi kepada
+siswa yang melanggar aturan.Kunci: B
+53. (PG) Perhatikan pernyataan berikut:
+"Kasih sayang Allah (Al-Wadud) jauh lebih luas dan
+tulus dibandingkan kasih sayang manusia."
+Manakah bukti paling tepat yang mendukung pernyataan
+tersebut?
+A. Manusia sering menyayangi orang lain karena mengharapkan
+balasan atau pujian, sedangkan Allah tetap memberi rezeki bahkan kepada hamba
+yang sering melupakan-Nya.
+B. Allah hanya memberikan kasih sayang kepada orang-orang
+yang kaya raya dan sehat saja.
+C. Kasih sayang manusia tidak memiliki batas, sedangkan
+kasih sayang Allah terbatas.
+D. Manusia selalu memaafkan semua kesalahan tanpa syarat,
+sedangkan Allah tidak.
+Kunci: A
+54. (PG) Dina melakukan evaluasi diri sebelum tidur. Ia
+teringat bahwa tadi siang ia membentak adiknya karena adiknya tidak sengaja
+menumpahkan air minum di buku gambar Dina. Besok pagi, perbaikan sikap yang
+paling tepat dilakukan Dina untuk meneladani Al-Halim dan Al-Wadud adalah ....
+A. diam saja dan berpura-pura tidak terjadi apa-apa
+B. meminta maaf kepada adiknya dengan lembut, memeluknya,
+dan membantu merapikan mainan adik
+C. menyembunyikan semua buku gambarnya agar tidak disentuh
+adik lagi
+D. mengadukan kesalahan adiknya kepada ibu agar adiknya
+dimarahiKunci: B
+55. (PG) Apa yang akan terjadi dalam kehidupan bermasyarakat
+apabila manusia tidak mau meneladani sifat Al-Halim dan Al-Wadud?
+A. Masyarakat akan hidup rukun karena setiap orang mengurus
+dirinya sendiri.
+B. Perselisihan kecil akan mudah berubah menjadi
+pertengkaran besar karena hilangnya rasa sabar dan kasih sayang.
+C. Semua masalah hukum akan selesai dengan cepat tanpa perlu
+musyawarah.
+D. Setiap orang akan berlomba-lomba berbuat kebaikan tanpa
+pamrih.Kunci: B
+56. (PGK) Bacalah studi kasus berikut!
+Di kelas 5A terjadi perdebatan hebat antara kelompok piket
+hari Senin dan Selasa karena kelas masih kotor. Kedua kelompok saling
+menyalahkan dan hampir bertengkar.
+Sebagai siswa yang memahami Asmaul Husna, langkah evaluasi
+dan penyelesaian masalah manakah yang mencerminkan gabungan sifat Al-Halim,
+Al-Hakim, dan Al-Wadud? (Pilih tiga jawaban)
+- 
+-  [x]
+-      Menenangkan kedua kelompok dengan tutur kata yang lembut agar tidak emosi
+-      (Al-Halim).
+- 
+-  [x]
+-      Mengajak kedua kelompok bermusyawarah untuk mencari solusi adil dan
+-      membuat jadwal kontrol piket bersama (Al-Hakim).
+- 
+-  [x]
+-      Mengingatkan bahwa sesama teman harus saling menyayangi dan menjaga
+-      kebersamaan kelas (Al-Wadud).
+- 
+-  [
+-      ] Memihak salah satu kelompok yang anggotanya lebih banyak agar masalah
+-      cepat selesai.Kunci: Pernyataan 1, 2, dan 3
+57. (PGK) Analisislah hubungan antara syukur nikmat
+(Asy-Syakur) dengan ketaatan beribadah! Manakah pernyataan yang benar? (Pilih
+dua jawaban)
+- 
+-  [x]
+-      Semakin tinggi rasa syukur seseorang atas nikmat Allah, semakin rajin ia
+-      menjalankan perintah-Nya sebagai bentuk terima kasih.
+- 
+-  [
+-      ] Orang yang bersyukur cukup mengucapkan Alhamdulillah di lisan tanpa
+-      perlu melaksanakan salat atau berbuat baik.
+- 
+-  [x]
+-      Menggunakan nikmat mata untuk membaca Al-Qur'an adalah wujud nyata
+-      meneladani sifat Asy-Syakur.
+- 
+-  [
+-      ] Syukur hanya dilakukan ketika seseorang mendapatkan hadiah atau nilai
+-      bagus saja.Kunci: Pernyataan 1 dan 3
+58. (PGK) Dalam melakukan evaluasi diri (muhasabah) harian
+terkait Asmaul Husna, pertanyaan reflektif manakah yang tepat diajukan oleh
+seorang siswa kepada dirinya sendiri? (Pilih tiga jawaban)
+- 
+-  [x]
+-      "Apakah hari ini saya sudah menahan amarah ketika diganggu
+-      teman?" (Refleksi Al-Halim)
+- 
+-  [x]
+-      "Sudahkah saya berterima kasih kepada orang tua atas makanan yang
+-      disiapkan hari ini?" (Refleksi Asy-Syakur)
+- 
+-  [x]
+-      "Apakah keputusan yang saya ambil hari ini sudah adil dan tidak
+-      merugikan orang lain?" (Refleksi Al-Hakim)
+- 
+-  [
+-      ] "Bagaimana cara agar teman-teman memuji kebaikan yang sudah saya
+-      lakukan hari ini?"Kunci: Pernyataan 1, 2, dan 3
+59. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Seseorang yang selalu mengeluh saat diberi ujian sakit
+berarti ia belum memahami secara mendalam bahwa di balik setiap ketetapan Allah
+(Al-Hakim) pasti terdapat hikmah kebaikan."
+Jawaban: Benar
+60. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Meneladani sifat Al-Wadud berarti kita harus menuruti
+semua keinginan teman meskipun teman tersebut mengajak kita membolos
+sekolah."
+Jawaban: Salah (Kasih sayang sejati adalah mengajak teman
+pada kebaikan, bukan mendukung perbuatan salah).
+MATERI 3: Akhlak terhadap Allah Swt. (Berdoa dan Bertawakal)
+A. Tingkat Kesukaran: MUDAH (Level Kognitif: Mengetahui)
+61. (PG) Memohon pertolongan, perlindungan, dan kebaikan
+hanya kepada Allah Swt. dengan penuh kerendahan hati disebut ....
+A. tawakal
+B. ikhtiar
+C. berdoa
+D. qanaahKunci: C
+62. (PG) Berserah diri sepenuhnya kepada Allah Swt. setelah
+melakukan usaha dan doa secara maksimal disebut ....
+A. pasrah
+B. bertawakal
+C. berputus asa
+D. sombongKunci: B
+63. (PG) Dalam sebuah hadis, Rasulullah saw. menjelaskan
+bahwa doa adalah ... ibadah.
+A. penutup
+B. syarat
+C. inti/otak
+D. pelengkapKunci: C
+64. (PG) Berikut ini yang termasuk adab ketika berdoa kepada
+Allah Swt. adalah ....
+A. berdoa dengan suara teriak-teriak
+B. mengawali doa dengan memuji Allah dan membaca salawat
+C. meminta sesuatu yang buruk untuk orang lain
+D. berdoa sambil bercanda dengan temanKunci: B
+65. (PG) Usaha sungguh-sungguh yang dilakukan manusia
+sebelum bertawakal kepada Allah Swt. disebut ....
+A. ikhtiar
+B. takabur
+C. ria
+D. istiqamahKunci: A
+66. (PGK) Manakah di antara berikut ini yang merupakan adab
+berdoa yang dianjurkan dalam Islam? (Pilih tiga jawaban)
+- 
+-  [x]
+-      Dalam keadaan suci (berwudu) dan menghadap kiblat.
+- 
+-  [x]
+-      Mengangkat kedua telapak tangan dengan penuh harap.
+- 
+-  [ ]
+-      Memaksa Allah agar doa segera dikabulkan saat itu juga.
+- 
+-  [x]
+-      Menutup doa dengan membaca salawat dan Alhamdulillahi rabbil
+-      ‘alamin.Kunci: Pernyataan 1, 2, dan 4
+67. (PGK) Pilihlah dua pernyataan yang benar mengenai
+pengertian tawakal!
+- 
+-  [x]
+-      Tawakal dilakukan setelah seseorang berusaha (ikhtiar) secara maksimal.
+- 
+-  [
+-      ] Tawakal berarti berdiam diri di rumah tanpa bekerja atau belajar.
+- 
+-  [x]
+-      Orang yang bertawakal akan menerima hasil keputusan Allah dengan hati yang
+-      lapang.
+- 
+-  [
+-      ] Tawakal hanya dilakukan oleh orang-orang yang sedang mengalami musibah
+-      saja.Kunci: Pernyataan 1 dan 3
+68. (PGK) Kepada siapa sajakah umat Islam diperintahkan
+untuk memanjatkan doa? (Pilih dua jawaban yang tepat berdasarkan konteks doa
+kebaikan)
+- 
+-  [x]
+-      Memohon ampunan dan keselamatan untuk diri sendiri.
+- 
+-  [x]
+-      Mendoakan kebaikan bagi kedua orang tua, guru, dan kaum muslimin.
+- 
+-  [
+-      ] Meminta pertolongan kepada benda-benda keramat atau kuburan.
+- 
+-  [
+-      ] Berdoa agar teman mengalami kegagalan saat ujian.Kunci: Pernyataan 1 dan
+-      2
+69. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Berdoa kepada selain Allah Swt. merupakan perbuatan
+syirik yang sangat dilarang dalam agama Islam."
+Jawaban: Benar
+70. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Waktu-waktu mustajab (utama) untuk berdoa antara lain
+saat sujud dalam salat, antara azan dan ikamah, serta saat turun hujan."
+Jawaban: Benar
+B. Tingkat Kesukaran: SEDANG (Level Kognitif: Menerapkan)
+71. (PG) Besok pagi akan diadakan lomba pidato PAI tingkat
+kecamatan. Zaki berlatih pidato setiap hari di depan cermin, meminta bimbingan
+guru, dan berdoa sebelum tidur. Saat lomba dimulai, Zaki menyerahkan hasilnya
+kepada Allah Swt. Urutan sikap Zaki menunjukkan penerapan ....
+A. tawakal – ikhtiar – doa
+B. ikhtiar – doa – tawakal
+C. doa – pasrah – sombong
+D. ikhtiar – sombong – tawakalKunci: B
+72. (PG) Perhatikan cara berdoa berikut:
+1. 
+2.  Membaca
+3.      basmalah, hamdalah, dan salawat.
+4. 
+5.  Menyampaikan
+6.      permohonan dengan suara lembut dan penuh keyakinan.
+7. 
+8.  Mengangkat
+9.      kedua tangan.
+10. 
+11.  Menutup
+12.      dengan hamdalah.
+13. 
+14.  Urutan
+15.      adab berdoa yang paling runtut adalah ....
+16. 
+17.  A.
+18.      1 – 2 – 3 – 4
+19. 
+20.  B.
+21.      3 – 1 – 2 – 4
+22. 
+23.  C.
+24.      2 – 3 – 1 – 4
+25. 
+26.  D.
+27.      4 – 3 – 2 – 1Kunci: B
+73. (PG) Nabila sudah belajar dengan sangat giat untuk
+menghadapi olimpiade sains. Namun, saat pengumuman pemenang, Nabila meraih
+juara harapan 1. Sikap Nabila yang mencerminkan perilaku tawakal adalah ....
+A. menangis seharian dan menyobek sertifikat lombanya
+B. merasa usahanya sia-sia dan berjanji tidak akan belajar
+lagi
+C. menerima hasil tersebut dengan ikhlas, tetap bersyukur,
+dan menjadikannya motivasi untuk belajar lebih baik
+D. menyalahkan juri lomba karena dianggap tidak adilKunci: C
+74. (PG) Ketika hendak berangkat ke sekolah, Aisyah
+berpamitan kepada kedua orang tuanya dan membaca doa keluar rumah (Bismillahi
+tawakkaltu ‘alallah...). Makna dari doa yang dibaca Aisyah adalah ....
+A. Aisyah yakin dirinya tidak akan pernah terkena musibah
+karena tubuhnya kuat
+B. Aisyah menyerahkan keselamatan perjalanannya sepenuhnya
+kepada Allah Swt.
+C. Aisyah meminta agar diberi uang saku tambahan oleh orang
+tuanya
+D. Aisyah tidak perlu berhati-hati saat menyeberang jalan
+karena sudah berdoaKunci: B
+75. (PG) Andi sedang sakit demam. Cara menerapkan gabungan
+antara ikhtiar, doa, dan tawakal yang tepat dilakukan Andi adalah ....
+A. hanya berdoa di kamar tanpa mau minum obat dari dokter
+B. minum obat sesuai resep dokter tanpa mau berdoa karena
+yakin obat pasti menyembuhkan
+C. berobat ke dokter, minum obat teratur, berdoa memohon
+kesembuhan kepada Allah, dan bersabar menunggu kesembuhan
+D. tetap bermain hujan-hujanan karena sakit dan sembuh
+adalah takdir AllahKunci: C
+76. (PGK) Perhatikan tindakan siswa berikut saat menghadapi
+ujian sekolah! Manakah yang merupakan penerapan ikhtiar dan tawakal yang benar?
+(Pilih dua jawaban)
+- 
+-  [x]
+-      Mengulang pelajaran di rumah jauh-jauh hari sebelum ujian dimulai.
+- 
+-  [
+-      ] Menyontek catatan kecil saat pengawas lengah agar mendapat nilai tinggi.
+- 
+-  [x]
+-      Berdoa sebelum mengerjakan soal dan percaya diri dengan kemampuan sendiri.
+- 
+-  [
+-      ] Menjawab soal secara asal-asalan tanpa dibaca karena pasrah pada
+-      takdir.Kunci: Pernyataan 1 dan 3
+77. (PGK) Mengapa seorang mukmin dilarang berputus asa
+apabila doanya belum langsung dikabulkan oleh Allah Swt.? (Pilih tiga alasan
+yang benar menurut ajaran Islam)
+- 
+-  [x]
+-      Karena Allah Maha Mengetahui waktu terbaik untuk mengabulkan doa
+-      hamba-Nya.
+- 
+-  [x]
+-      Bisa jadi Allah mengganti permintaan tersebut dengan kebaikan lain yang
+-      lebih dibutuhkan.
+- 
+-  [x]
+-      Bisa jadi Allah menunda pengabulannya sebagai tabungan pahala di akhirat
+-      kelak.
+- 
+-  [
+-      ] Karena Allah tidak mendengar doa orang-orang yang pernah berbuat
+-      salah.Kunci: Pernyataan 1, 2, dan 3
+78. (PGK) Manakah di antara doa-doa harian berikut yang
+mengandung unsur tawakal kepada Allah Swt.? (Pilih dua jawaban)
+- 
+-  [x]
+-      Doa keluar rumah (Bismillāhi tawakkaltu ‘alallāhi lā haula wa lā quwwata
+-      illā billāh).
+- 
+-  [x]
+-      Doa sebelum tidur (Bismikallāhumma ahyā wa bismika amūt).
+- 
+-  [ ]
+-      Ucapan salam ketika bertemu dengan teman di jalan.
+- 
+-  [ ]
+-      Bacaan takbir saat memulai salat (Allāhu Akbar).Kunci: Pernyataan 1 dan 2
+79. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Mengunci pintu rumah dan pagar sebelum bepergian lalu
+berdoa memohon perlindungan Allah adalah bentuk nyata dari tawakal yang
+benar."
+Jawaban: Benar
+80. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Ketika berdoa di dalam masjid, sebaiknya kita
+berteriak sekeras-kerasnya agar doa kita lebih cepat sampai kepada Allah
+Swt."
+Jawaban: Salah (Allah Maha Mendengar; berdoa dianjurkan
+dengan suara lembut dan penuh kekhusyukan).
+C. Tingkat Kesukaran: SULIT (Level Kognitif: Merefleksi
+& Mengevaluasi)
+81. (PG) Bacalah dialog berikut!
+Rudi: "Buat apa kita belajar capek-capek untuk ujian
+besok? Kan nilai bagus atau jelek sudah ditentukan Allah. Lebih baik kita
+berdoa saja."
+Salman: "Pendapatmu keliru, Rud. Justru tawakal itu
+harus diawali dengan usaha maksimal."
+Mengapa pernyataan Rudi dinilai keliru dalam konsep akhlak
+kepada Allah Swt.?
+A. Karena berdoa tidak boleh dilakukan sebelum ujian.
+B. Karena menyerahkan hasil tanpa mau berusaha (belajar)
+bukanlah tawakal, melainkan sikap malas dan menyalahgunakan konsep takdir.
+C. Karena nilai ujian hanya ditentukan oleh kecerdasan otak
+manusia tanpa campur tangan Allah.
+D. Karena belajar lebih penting daripada berdoa kepada
+Allah.
+Kunci: B
+82. (PG) Perhatikan dua sikap manusia berikut:
+- 
+-  Sikap
+-      X: Bekerja keras siang malam, cerdas menyusun rencana, tetapi merasa
+-      sukses murni karena kehebatannya sendiri sehingga enggan berdoa.
+- 
+-  Sikap
+-      Y: Bekerja keras dengan sungguh-sungguh, selalu berdoa memohon pertolongan
+-      Allah, dan bersyukur saat berhasil.
+- 
+-  Berdasarkan
+-      refleksi nilai akhlak, bahaya apa yang mengancam pemilik Sikap X?
+- 
+-  A.
+-      Ia akan mudah terjerumus pada sifat sombong (takabur) dan mudah
+-      stres/putus asa apabila rencananya gagal.
+- 
+-  B.
+-      Ia akan menjadi orang yang paling bertawakal di hadapan Allah.
+- 
+-  C.
+-      Ia tidak akan pernah mengalami kegagalan dalam hidupnya.
+- 
+-  D.
+-      Ia sudah menerapkan ikhtiar yang sempurna sehingga tidak membutuhkan
+-      doa.Kunci: A
+83. (PG) Seorang petani sudah membajak sawah, menanam bibit
+unggul, memberi pupuk, dan berdoa setiap hari agar panennya melimpah. Namun,
+menjelang panen datang hama wereng yang merusak sebagian tanamannya. Keputusan
+sikap manakah yang paling tepat diambil petani tersebut sebagai wujud refleksi
+tawakal?
+A. Berhenti menjadi petani karena merasa doanya tidak
+berguna.
+B. Tetap bersyukur atas sisa panen yang masih bisa
+diselamatkan, mengevaluasi cara membasmi hama untuk musim tanam berikutnya, dan
+berbaik sangka (husnuzan) kepada Allah.
+C. Mengeluh kepada semua tetangga bahwa Allah tidak adil
+kepadanya.
+D. Membiarkan sawahnya terbengkalai tanpa dirawat
+lagi.Kunci: B
+84. (PG) Dalam sebuah hadis, seorang sahabat bertanya kepada
+Rasulullah saw., "Wahai Rasulullah, apakah aku ikat untaku lalu aku
+bertawakal, atau aku lepaskan saja lalu aku bertawakal?" Rasulullah
+menjawab, "Ikatlah untamu, baru kemudian bertawakallah!"
+Pelajaran mendalam apa yang dapat direfleksikan siswa dari
+hadis tersebut?
+A. Hewan peliharaan harus selalu diikat setiap saat.
+B. Keimanan dan tawakal kepada Allah tidak boleh meniadakan
+akal sehat, kehati-hatian, dan tindakan pencegahan (ikhtiar).
+C. Tawakal hanya berlaku untuk menjaga barang berharga saja.
+D. Jika unta sudah diikat, manusia tidak perlu lagi berdoa
+kepada Allah.Kunci: B
+85. (PG) Farhan berdoa agar diberi kesehatan, tetapi setiap
+hari ia jajan sembarangan, tidak pernah berolahraga, dan tidur hingga tengah
+malam. Ketika Farhan jatuh sakit, ia merasa kecewa karena doanya tidak
+dikabulkan. Evaluasi yang tepat terhadap sikap Farhan adalah ....
+A. Allah tidak mengabulkan doa anak-anak yang masih kecil.
+B. Farhan berdoa, tetapi perbuatannya bertentangan dengan
+isi doanya sendiri (tidak berikhtiar menjaga kesehatan).
+C. Doa Farhan kurang panjang sehingga tidak didengar oleh
+Allah.
+D. Farhan seharusnya tidak perlu berdoa jika ingin
+sehat.Kunci: B
+86. (PGK) Analisislah perbedaan mendasar antara Tawakal dan
+Pasrah (Putus Asa)! Manakah pernyataan yang tepat? (Pilih dua jawaban)
+- 
+-  [x]
+-      Tawakal dilandasi usaha maksimal dan keyakinan positif kepada Allah,
+-      sedangkan pasrah lahir dari kemalasan dan ketiadaan usaha.
+- 
+-  [x]
+-      Orang yang bertawakal tetap tenang dan optimis apa pun hasilnya, sedangkan
+-      orang yang pasrah mudah kecewa dan menyalahkan keadaan.
+- 
+-  [ ]
+-      Tawakal dan pasrah memiliki arti yang sama persis dalam ajaran Islam.
+- 
+-  [ ]
+-      Tawakal dilakukan sebelum berusaha, sedangkan pasrah dilakukan setelah
+-      berusaha.Kunci: Pernyataan 1 dan 2
+87. (PGK) Bacalah kasus berikut!
+Zahra sangat ingin menjadi juara kelas. Ia sudah belajar
+giat dan berdoa. Namun, saat pembagian rapor, ia berada di peringkat kedua.
+Keputusan sikap manakah yang menunjukkan keberhasilan Zahra
+merefleksikan makna doa dan tawakal? (Pilih tiga jawaban)
+- 
+-  [x]
+-      Mengucapkan selamat dengan tulus kepada teman yang meraih peringkat
+-      pertama.
+- 
+-  [x]
+-      Mengucapkan Alhamdulillah karena peringkat kedua adalah hasil terbaik yang
+-      Allah berikan saat ini.
+- 
+-  [x]
+-      Mengevaluasi cara belajarnya agar di semester depan bisa meraih hasil yang
+-      lebih optimal.
+- 
+-  [
+-      ] Menjauhi teman yang mendapat peringkat pertama karena merasa
+-      tersaingi.Kunci: Pernyataan 1, 2, dan 3
+88. (PGK) Mengapa adab berdoa mengharuskan kita memulai
+dengan memuji Allah dan bersalawat kepada Nabi Muhammad saw. sebelum
+menyampaikan permintaan pribadi? (Pilih dua jawaban)
+- 
+-  [x]
+-      Sebagai wujud tata krama (sopan santun) seorang hamba kepada Penciptanya
+-      sebelum mengajukan permohonan.
+- 
+-  [x]
+-      Menunjukkan bahwa kita bersyukur atas nikmat yang sudah ada sebelum
+-      meminta nikmat yang baru.
+- 
+-  [
+-      ] Karena Allah tidak akan tahu apa yang kita minta jika tidak diawali
+-      salawat.
+- 
+-  [
+-      ] Agar doa kita terdengar lebih indah oleh orang-orang di sekitar
+-      kita.Kunci: Pernyataan 1 dan 2
+89. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Seorang siswa yang menyontek saat ujian kemudian
+berdoa memohon nilai bagus sebenarnya sedang tidak jujur dalam beribadah,
+karena doa yang baik harus diiringi dengan cara usaha (ikhtiar) yang
+halal."
+Jawaban: Benar
+90. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Orang yang bertawakal kepada Allah Swt. tidak akan
+pernah merasa sedih ketika tertimpa musibah karena ia tidak memiliki
+perasaan."
+Jawaban: Salah (Sedih adalah sifat manusiawi yang wajar,
+namun orang yang bertawakal tidak berlarut-larut dalam kesedihan dan tidak
+menyalahkan takdir Allah).
+MATERI 4: Ketentuan Puasa Wajib dan Puasa Sunnah
+A. Tingkat Kesukaran: MUDAH (Level Kognitif: Mengetahui)
+91. (PG) Secara bahasa, kata Shaum (puasa) memiliki arti
+....
+A. membersihkan diri
+B. menahan diri
+C. mendoakan
+D. mengunjungiKunci: B
+92. (PG) Waktu pelaksanaan ibadah puasa dimulai sejak ...
+hingga ....
+A. tengah malam – terbit matahari
+B. terbit fajar (Subuh) – terbenam matahari (Magrib)
+C. terbit matahari (Duha) – terbenam matahari (Magrib)
+D. terbit fajar (Subuh) – tengah malamKunci: B
+93. (PG) Berikut ini yang termasuk kategori puasa wajib bagi
+umat Islam adalah ....
+A. puasa Senin dan Kamis
+B. puasa Syawal
+C. puasa Ramadan
+D. puasa ArafahKunci: C
+94. (PG) Puasa sunnah yang dilaksanakan pada tanggal 9
+Zulhijah bagi umat Islam yang tidak sedang menunaikan ibadah haji adalah puasa
+....
+A. Asyura
+B. Arafah
+C. Syawal
+D. Ayyamul BidhKunci: B
+95. (PG) Niat puasa dan menahan diri dari segala hal yang
+membatalkan puasa merupakan bagian dari ... puasa.
+A. syarat wajib
+B. rukun
+C. sunnah
+D. hikmahKunci: B
+96. (PGK) Manakah di antara berikut ini yang termasuk jenis
+puasa wajib? (Pilih tiga jawaban)
+- 
+-  [x]
+-      Puasa Ramadan
+- 
+-  [x]
+-      Puasa Qadha (pengganti puasa Ramadan)
+- 
+-  [
+-      ] Puasa Ayyamul Bidh
+- 
+-  [x]
+-      Puasa NazarKunci: Pernyataan 1, 2, dan 4
+97. (PGK) Berikut ini yang merupakan syarat wajib seseorang
+harus berpuasa Ramadan adalah .... (Pilih tiga jawaban)
+- 
+-  [x]
+-      Beragama Islam
+- 
+-  [x]
+-      Baligh (sudah dewasa)
+- 
+-  [
+-      ] Sudah menikah
+- 
+-  [x]
+-      Berakal sehat dan mampu berpuasaKunci: Pernyataan 1, 2, dan 4
+98. (PGK) Manakah di antara perbuatan berikut yang
+membatalkan puasa? (Pilih dua jawaban)
+- 
+-  [x]
+-      Makan dan minum dengan sengaja di siang hari.
+- 
+-  [
+-      ] Tidur di siang hari saat bulan Ramadan.
+- 
+-  [x]
+-      Muntah dengan sengaja.
+- 
+-  [
+-      ] Berkumur-kumur saat berwudu tanpa tertelan airnya.Kunci: Pernyataan 1
+-      dan 3
+99. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Puasa Syawal dilaksanakan selama 6 hari pada bulan
+Syawal setelah Hari Raya Idulfitri."
+Jawaban: Benar
+100. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Puasa Ayyamul Bidh adalah puasa sunnah yang
+dilaksanakan setiap tanggal 1, 2, dan 3 pada setiap bulan Hijriah."
+Jawaban: Salah (Puasa Ayyamul Bidh dilaksanakan pada tanggal
+13, 14, dan 15 setiap bulan Hijriah).
+B. Tingkat Kesukaran: SEDANG (Level Kognitif: Menerapkan)
+101. (PG) Bu Aminah tidak dapat berpuasa Ramadan selama 5
+hari karena sedang sakit parah. Setelah sembuh dan bulan Ramadan berlalu, Bu
+Aminah wajib mengganti puasanya sebanyak 5 hari. Puasa yang dilakukan Bu Aminah
+disebut puasa ....
+A. Nazar
+B. Kafarat
+C. Qadha
+D. SyawalKunci: C
+102. (PG) Ahmad berjanji kepada Allah Swt., "Jika aku
+lulus ujian dengan nilai memuaskan, aku akan berpuasa selama 3 hari."
+Setelah pengumuman, Ahmad benar-benar lulus dengan nilai memuaskan. Hukum puasa
+3 hari yang harus dilakukan Ahmad adalah ....
+A. sunnah muakkad
+B. wajib (puasa nazar)
+C. mubah
+D. makruhKunci: B
+103. (PG) Perhatikan peristiwa berikut:
+Pada pukul 13.00 siang di bulan Ramadan, Salma merasa sangat
+haus. Karena lupa bahwa ia sedang berpuasa, Salma mengambil segelas air putih
+dan meminumnya. Setelah setengah gelas, ia baru teringat bahwa ia sedang
+berpuasa, lalu segera berhenti minum.
+Bagaimana status puasa Salma?
+A. Batal, dan wajib menggantinya di hari lain.
+B. Sah, dan boleh melanjutkan puasanya hingga Magrib karena
+ia minum dalam keadaan lupa.
+C. Batal, tetapi ia boleh makan sampai kenyang sekalian.
+D. Makruh, sehingga pahalanya hilang seluruhnya.
+Kunci: B
+104. (PG) Umar bangun kesiangan pada pukul 05.30 pagi saat
+bulan Ramadan sehingga ia tidak sempat makan sahur. Namun, sebelum tidur malam
+tadi, Umar sudah berniat di dalam hati untuk berpuasa Ramadan esok hari.
+Ketentuan puasa Umar adalah ....
+A. puasanya tidak sah karena tidak makan sahur
+B. puasanya tetap sah karena niat sudah dilakukan di malam
+hari, sedangkan sahur hukumnya sunnah
+C. puasanya batal pada pukul 12.00 siang
+D. Umar harus membatalkan puasanya dan menggantinya tahun
+depanKunci: B
+105. (PG) Perhatikan pernyataan berikut:
+1. 
+2.  Mengakhirkan
+3.      makan sahur.
+4. 
+5.  Menyegerakan
+6.      berbuka puasa saat azan Magrib tiba.
+7. 
+8.  Memperbanyak
+9.      tadarus Al-Qur'an dan bersedekah.
+10. 
+11.  Berbuka
+12.      dengan makanan yang manis (seperti kurma).
+13. 
+14.  Pernyataan
+15.      di atas termasuk dalam kategori ... puasa.
+16. 
+17.  A.
+18.      rukun puasa
+19. 
+20.  B.
+21.      syarat sah puasa
+22. 
+23.  C.
+24.      sunnah-sunnah puasa
+25. 
+26.  D.
+27.      hal yang membatalkan puasaKunci: C
+106. (PGK) Perhatikan daftar hari berikut ini! Manakah
+waktu-waktu yang diharamkan untuk melaksanakan ibadah puasa? (Pilih dua
+jawaban)
+- 
+-  [x]
+-      Hari Raya Idulfitri (1 Syawal) dan Iduladha (10 Zulhijah).
+- 
+-  [ ]
+-      Hari Senin dan Kamis di bulan Rajab.
+- 
+-  [x]
+-      Hari Tasyrik (tanggal 11, 12, dan 13 Zulhijah).
+- 
+-  [ ]
+-      Tanggal 10 Muharam (Hari Asyura).Kunci: Pernyataan 1 dan 3
+107. (PGK) Siswa kelas 5 SD yang berusia 11 tahun (belum
+baligh) berlatih berpuasa Ramadan. Agar puasanya sah dan bernilai ibadah,
+syarat sah puasa manakah yang harus dipenuhi? (Pilih tiga jawaban)
+- 
+-  [x]
+-      Beragama Islam.
+- 
+-  [x]
+-      Mumayyiz (sudah dapat membedakan perbuatan baik dan buruk).
+- 
+-  [x]
+-      Suci dari haid dan nifas.
+- 
+-  [
+-      ] Wajib sudah berusia minimal 17 tahun.Kunci: Pernyataan 1, 2, dan 3
+108. (PGK) Manakah di antara tindakan berikut yang tidak
+membatalkan puasa, meskipun dilakukan pada siang hari di bulan Ramadan? (Pilih
+tiga jawaban)
+- 
+-  [x]
+-      Menyikat gigi di pagi hari dengan hati-hati agar pasta gigi tidak
+-      tertelan.
+- 
+-  [x]
+-      Mandi atau berendam untuk menyegarkan badan saat cuaca sangat panas.
+- 
+-  [x]
+-      Menangis karena terharu saat membaca Al-Qur'an.
+- 
+-  [
+-      ] Muntah dengan sengaja dengan cara memasukkan jari ke tenggorokan.Kunci:
+-      Pernyataan 1, 2, dan 3
+109. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Bagi orang yang sedang melakukan perjalanan jauh
+(musafir) dengan tujuan kebaikan, Islam memberikan keringanan (rukhsah) untuk
+tidak berpuasa Ramadan, namun wajib menggantinya (qadha) di hari lain."
+Jawaban: Benar
+110. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Untuk puasa sunnah (seperti puasa Senin-Kamis), niat
+puasa masih boleh dilakukan pada pagi hari sebelum waktu Zuhur asalkan belum
+makan, minum, atau melakukan hal yang membatalkan puasa sejak terbit
+fajar."
+Jawaban: Benar
+C. Tingkat Kesukaran: SULIT (Level Kognitif: Merefleksi
+& Mengevaluasi)
+111. (PG) Bacalah kasus berikut!
+Dani berpuasa Ramadan sejak Subuh hingga Magrib. Ia tidak
+makan dan tidak minum sedikit pun. Namun, sepanjang hari Dani bertengkar dengan
+adiknya, berkata kasar saat bermain game, dan berbohong kepada ibunya.
+Berdasarkan evaluasi ketentuan dan tujuan puasa, bagaimana
+kualitas puasa Dani?
+A. Puasanya sah secara hukum fiqih (tidak wajib qadha),
+tetapi ia tidak mendapatkan pahala puasa karena hanya menahan lapar dan haus
+tanpa menjaga lisan dan akhlaknya.
+B. Puasanya batal secara hukum fiqih sehingga ia wajib
+menggantinya setelah Lebaran.
+C. Puasanya tetap sempurna dan berpahala penuh karena ia
+tidak makan dan minum.
+D. Dani harus membayar denda kafarat karena berkata kasar
+saat puasa.
+Kunci: A
+112. (PG) Mengapa Allah Swt. mewajibkan puasa Ramadan kepada
+orang-orang yang beriman dengan tujuan akhir La‘allakum tattaqūn (agar kalian
+bertakwa)?
+A. Karena puasa melatih manusia mengendalikan hawa nafsu,
+jujur saat tidak ada orang yang melihat, dan peduli terhadap penderitaan fakir
+miskin.
+B. Karena puasa bertujuan menghemat persediaan makanan
+negara selama satu bulan.
+C. Karena orang yang berpuasa tidak perlu lagi melaksanakan
+salat fardu.
+D. Karena puasa hanya bertujuan untuk menurunkan berat badan
+manusia.Kunci: A
+113. (PG) Perhatikan peristiwa berikut:
+Laila baru saja mengalami haid pertamanya pada pukul 16.30
+sore di bulan Ramadan, padahal waktu berbuka puasa tinggal 1,5 jam lagi.
+Evaluasi hukum fiqih yang tepat terhadap kondisi Laila
+adalah ....
+A. Laila boleh menahan diri sampai Magrib agar puasanya hari
+itu tetap dianggap sah.
+B. Puasa Laila pada hari itu otomatis batal karena syarat
+sah puasa adalah suci dari haid, sehingga ia wajib mengqadha puasanya di hari
+lain setelah suci.
+C. Laila tidak perlu mengganti puasanya karena haid datang
+di sore hari.
+D. Laila tetap wajib berniat puasa untuk keesokan harinya
+meskipun masih haid.
+Kunci: B
+114. (PG) Dalam sebuah hadis disebutkan: "Barang siapa
+berpuasa Ramadan kemudian mengikutinya dengan puasa enam hari di bulan Syawal,
+maka ia seperti berpuasa sepanjang tahun."
+Jika seorang siswa memiliki utang puasa qadha Ramadan
+sebanyak 3 hari dan juga ingin melaksanakan puasa sunnah Syawal 6 hari, langkah
+manakah yang paling utama dan bijaksana untuk dilakukan?
+A. Mendahulukan puasa sunnah Syawal terlebih dahulu,
+sedangkan puasa qadha boleh dikerjakan tahun depan.
+B. Mendahulukan membayar utang puasa wajib (qadha Ramadan)
+sebanyak 3 hari terlebih dahulu, baru kemudian melaksanakan puasa sunnah Syawal
+6 hari.
+C. Tidak perlu mengerjakan keduanya karena cukup puasa
+Ramadan saja.
+D. Mengerjakan puasa Syawal saja karena pahalanya seperti
+puasa setahun.Kunci: B
+115. (PG) Apa hikmah sosial terbesar yang dapat dirasakan
+oleh seorang anak yang rajin menjalankan ibadah puasa dengan benar?
+A. Merasa lebih hebat daripada teman-teman yang tidak kuat
+berpuasa.
+B. Tumbuhnya rasa empati dan kepedulian untuk berbagi
+makanan kepada kaum duafa karena ia pernah merasakan perihnya rasa lapar dan
+haus.
+C. Terbiasa tidur sepanjang hari agar tidak merasa lelah.
+D. Menghabiskan uang saku untuk membeli takjil
+sebanyak-banyaknya tanpa berbagi.Kunci: B
+116. (PGK) Bacalah ilustrasi evaluasi diri berikut!
+Di akhir bulan Ramadan, Yusuf merenungkan ibadah puasanya
+selama sebulan penuh. Ia menyadari bahwa ia sering menunda salat Asar karena
+tidur sore, dan jarang membaca Al-Qur'an.
+Rencana perbaikan diri yang tepat bagi Yusuf untuk
+meningkatkan kualitas ibadahnya di bulan Syawal dan bulan-bulan berikutnya
+adalah .... (Pilih tiga jawaban)
+- 
+-  [x]
+-      Membiasakan salat tepat waktu di awal waktu dan tidak tidur berlebihan di
+-      sore hari.
+- 
+-  [x]
+-      Menjadwalkan membaca Al-Qur'an minimal 1 halaman setiap selesai salat
+-      fardu.
+- 
+-  [x]
+-      Melatih diri menjaga semangat puasa dengan melaksanakan puasa sunnah
+-      Syawal atau Senin-Kamis.
+- 
+-  [
+-      ] Berhenti beribadah sementara waktu karena bulan Ramadan sudah
+-      selesai.Kunci: Pernyataan 1, 2, dan 3
+117. (PGK) Analisislah perbedaan antara Puasa Nazar dan
+Puasa Sunnah! Manakah pernyataan yang benar? (Pilih dua jawaban)
+- 
+-  [x]
+-      Puasa sunnah awalnya tidak wajib, namun jika dinazarkan (dijanjikan kepada
+-      Allah) hukumnya berubah menjadi wajib dilaksanakan.
+- 
+-  [x]
+-      Meninggalkan puasa sunnah tidak berdosa, sedangkan meninggalkan puasa
+-      nazar tanpa alasan syar'i hukumnya berdosa.
+- 
+-  [ ]
+-      Puasa nazar hanya boleh dilakukan pada hari Senin dan Kamis saja.
+- 
+-  [ ]
+-      Puasa sunnah tidak memerlukan niat, sedangkan puasa nazar memerlukan
+-      niat.Kunci: Pernyataan 1 dan 2
+118. (PGK) Perhatikan kasus berikut!
+Pak Ridwan adalah seorang pekerja bangunan yang bekerja
+sangat berat di bawah terik matahari saat bulan Ramadan. Pada pukul 11.00
+siang, Pak Ridwan merasa pusing hebat, matanya berkunang-kunang, dan hampir
+pingsan.
+Berdasarkan prinsip kemudahan dalam syariat Islam, keputusan
+tepat apa yang boleh diambil Pak Ridwan? (Pilih dua jawaban)
+- 
+-  [x]
+-      Boleh membatalkan puasanya dengan minum dan makan secukupnya demi menjaga
+-      keselamatan jiwa/kesehatannya.
+- 
+-  [x]
+-      Wajib mengganti (qadha) puasa yang ditinggalkan tersebut pada hari lain di
+-      luar bulan Ramadan.
+- 
+-  [
+-      ] Memaksakan diri terus bekerja hingga pingsan karena membatalkan puasa
+-      adalah dosa besar dalam kondisi apa pun.
+- 
+-  [
+-      ] Tidak perlu mengganti puasanya di hari lain karena ia sedang bekerja
+-      mencari nafkah.Kunci: Pernyataan 1 dan 2
+119. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Seseorang yang berpuasa namun sengaja berbohong untuk
+mencelakai orang lain, maka menurut sabda Nabi Muhammad saw., Allah Swt. tidak
+membutuhkan rasa lapar dan haus yang ia tahan."
+Jawaban: Benar
+120. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Berbuka puasa secara berlebihan hingga kekenyangan dan
+membuang-buang sisa makanan sesuai dengan hikmah puasa yang mengajarkan
+kesederhanaan."
+Jawaban: Salah (Berlebih-lebihan / israf bertentangan dengan
+hikmah puasa).
+MATERI 5: Kepemimpinan Nabi Muhammad saw. di Madinah
+A. Tingkat Kesukaran: MUDAH (Level Kognitif: Mengetahui)
+121. (PG) Sebelum Nabi Muhammad saw. hijrah ke sana, Kota
+Madinah bernama ....
+A. Thaif
+B. Yatsrib
+C. Habasyah
+D. SyamKunci: B
+122. (PG) Masjid pertama yang dibangun oleh Nabi Muhammad
+saw. ketika tiba di pinggiran Kota Madinah adalah Masjid ....
+A. Nabawi
+B. Quba
+C. Haram
+D. AqsaKunci: B
+123. (PG) Penduduk asli Kota Madinah yang menyambut hangat
+dan menolong Nabi Muhammad saw. serta kaum muslimin dari Makkah disebut kaum
+....
+A. Muhajirin
+B. Anshar
+C. Quraisy
+D. BaduiKunci: B
+124. (PG) Perjanjian tertulis pertama yang dibuat oleh Nabi
+Muhammad saw. untuk mengatur kerukunan hidup antara umat Islam dan non-Muslim
+di Madinah disebut ....
+A. Perjanjian Hudaibiyah
+B. Piagam Madinah (Shahifah Madinah)
+C. Baiat Aqabah
+D. Fathu MakkahKunci: B
+125. (PG) Umat Islam yang ikut berhijrah bersama Nabi
+Muhammad saw. dari Makkah ke Madinah disebut kaum ....
+A. Anshar
+B. Muhajirin
+C. Bani Israil
+D. KhazrajKunci: B
+126. (PGK) Manakah di antara berikut ini yang merupakan
+langkah awal strategis Nabi Muhammad saw. dalam membangun masyarakat Madinah?
+(Pilih tiga jawaban)
+- 
+-  [x]
+-      Membangun masjid sebagai pusat ibadah dan kegiatan umat.
+- 
+-  [x]
+-      Mempersaudarakan kaum Muhajirin dan kaum Anshar.
+- 
+-  [x]
+-      Menyusun Piagam Madinah untuk menjaga kerukunan antarwarga.
+- 
+-  [
+-      ] Mengusir seluruh penduduk non-Muslim keluar dari Kota Madinah.Kunci:
+-      Pernyataan 1, 2, dan 3
+127. (PGK) Pada masa kepemimpinan Nabi Muhammad saw. di
+Madinah, fungsi Masjid Nabawi tidak hanya untuk salat berjemaah, tetapi juga
+digunakan untuk .... (Pilih tiga jawaban)
+- 
+-  [x]
+-      Tempat belajar mengajar dan menuntut ilmu agama.
+- 
+-  [x]
+-      Tempat bermusyawarah membahas urusan pemerintahan dan masyarakat.
+- 
+-  [x]
+-      Tempat menampung dan membantu kaum fakir miskin (Ahlus Suffah).
+- 
+-  [
+-      ] Tempat transaksi jual beli barang dagangan di dalam ruang salat.Kunci:
+-      Pernyataan 1, 2, dan 3
+128. (PGK) Dua suku besar bangsa Arab yang tinggal di
+Madinah dan berhasil didamaikan oleh Nabi Muhammad saw. adalah suku .... (Pilih
+dua jawaban)
+- 
+-  [x]
+-      Aus
+- 
+-  [x]
+-      Khazraj
+- 
+-  [
+-      ] Quraisy
+- 
+-  [
+-      ] TsaqifKunci: Pernyataan 1 dan 2
+129. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Arti dari Madinah Al-Munawwarah adalah Kota yang
+Bercahaya."
+Jawaban: Benar
+130. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Kaum Muhajirin adalah penduduk asli Madinah yang
+memberikan tempat tinggal dan harta kepada pendatang dari Makkah."
+Jawaban: Salah (Yang memberi pertolongan adalah kaum Anshar,
+sedangkan pendatang dari Makkah adalah kaum Muhajirin).
+B. Tingkat Kesukaran: SEDANG (Level Kognitif: Menerapkan)
+131. (PG) Dalam Piagam Madinah, Nabi Muhammad saw.
+menetapkan bahwa umat Islam dan penduduk Yahudi di Madinah bebas menjalankan
+agamanya masing-masing dan wajib saling membantu mempertahankan kota jika
+diserang musuh. Sikap kepemimpinan Nabi yang dapat diteladani siswa dari
+peristiwa ini adalah ....
+A. sikap toleransi beragama dan cinta tanah air
+B. sikap memaksakan kehendak kepada kelompok minoritas
+C. sikap mementingkan kelompok sendiri saja
+D. sikap menghindari kerja sama dengan orang yang berbeda
+sukuKunci: A
+132. (PG) Ketika tiba di Madinah, kaum Muhajirin tidak
+memiliki rumah dan pekerjaan karena harta mereka ditinggalkan di Makkah. Kaum
+Anshar dengan sukarela membagi rumah, kebun, dan modal usaha mereka kepada kaum
+Muhajirin. Jika diterapkan di sekolah, sikap kaum Anshar tersebut tercermin
+dalam tindakan ....
+A. membantu teman yang mengalami musibah kebakaran dengan
+menggalang dana bersama
+B. mengerjakan tugas kelompok sendirian agar mendapat nilai
+paling tinggi
+C. mengejek teman yang tidak mampu membeli seragam baru
+D. hanya mau berteman dengan anak yang berasal dari daerah
+yang samaKunci: A
+133. (PG) Rasulullah saw. mendirikan pasar khusus di Madinah
+dan melarang keras praktik penipuan timbangan, penimbunan barang, serta riba.
+Teladan kepemimpinan Rasulullah dalam bidang ekonomi tersebut dapat diterapkan
+siswa di kantin kejujuran sekolah dengan cara ....
+A. mengambil jajanan lebih banyak daripada uang yang
+dibayarkan
+B. membayar sesuai harga jajanan yang diambil secara jujur
+meskipun tidak ada guru yang menjaga
+C. meminjam uang teman tanpa berniat mengembalikannya
+D. menyembunyikan barang milik teman untuk bercandaKunci: B
+134. (PG) Sebelum mengambil keputusan penting bagi
+masyarakat Madinah, Nabi Muhammad saw. selalu mengajak para sahabat duduk
+bersama untuk bertukar pikiran (musyawarah). Contoh penerapan sikap tersebut
+saat pemilihan ketua kelas 5 adalah ....
+A. memilih ketua kelas berdasarkan suara terbanyak melalui
+musyawarah yang adil
+B. menunjuk anak yang paling kuat secara fisik tanpa diskusi
+C. memaksakan teman-teman untuk memilih sahabat dekat kita
+saja
+D. menolak hasil keputusan kelas jika tidak sesuai dengan
+keinginan pribadiKunci: A
+135. (PG) Nabi Muhammad saw. mengubah nama Kota Yatsrib
+(yang berarti celaan/keburukan) menjadi Madinah (kota peradaban). Hal ini
+mengajarkan kita untuk ....
+A. selalu memberikan nama, panggilan, atau julukan yang baik
+dan mengandung doa kepada teman
+B. memanggil teman dengan nama julukan yang lucu meskipun
+teman tersebut tidak suka
+C. sering berganti-ganti nama tanpa alasan yang jelas
+D. melupakan sejarah tempat asal kitaKunci: A
+136. (PGK) Perhatikan situasi di kelas 5 berikut!
+Di kelas 5 terdapat siswa yang beragama Islam, Kristen, dan
+Hindu. Mereka akan mengadakan kegiatan bakti sosial untuk panti asuhan.
+Tindakan manakah yang mencerminkan penerapan nilai-nilai
+Piagam Madinah dalam kegiatan tersebut? (Pilih tiga jawaban)
+- 
+-  [x]
+-      Bekerja sama mengumpulkan sumbangan tanpa membeda-bedakan agama.
+- 
+-  [x]
+-      Memberi kesempatan kepada setiap siswa untuk beribadah sesuai keyakinannya
+-      saat waktu ibadah tiba.
+- 
+-  [x]
+-      Menghormati pendapat setiap anggota panitia dalam rapat persiapan bakti
+-      sosial.
+- 
+-  [ ]
+-      Melarang siswa yang berbeda agama untuk ikut serta dalam
+-      kepanitiaan.Kunci: Pernyataan 1, 2, dan 3
+137. (PGK) Bagaimana cara siswa meneladani fungsi Masjid
+Nabawi pada masa Nabi Muhammad saw. dalam memakmurkan musala atau masjid
+sekolah? (Pilih dua jawaban)
+- 
+-  [x]
+-      Menjadikan musala sekolah sebagai tempat salat berjemaah dan belajar
+-      membaca Al-Qur'an bersama.
+- 
+-  [x]
+-      Menjaga kebersihan, ketenangan, dan kenyamanan musala agar semua warga
+-      sekolah betah beribadah.
+- 
+-  [
+-      ] Menggunakan musala sebagai tempat tidur saat jam pelajaran berlangsung.
+- 
+-  [
+-      ] Bermain kejar-kejaran di dalam ruang utama salat.Kunci: Pernyataan 1 dan
+-      2
+138. (PGK) Sikap amanah dan adil yang dicontohkan Nabi
+Muhammad saw. saat memimpin Madinah dapat diterapkan oleh seorang ketua regu
+pramuka dengan cara .... (Pilih dua jawaban)
+- 
+-  [x]
+-      Membagi tugas mendirikan tenda dan memasak secara adil kepada seluruh
+-      anggota regu.
+- 
+-  [x]
+-      Menjaga perlengkapan regu dengan penuh tanggung jawab hingga kegiatan
+-      selesai.
+- 
+-  [
+-      ] Memberikan tugas berat hanya kepada anggota yang tidak disukai.
+- 
+-  [
+-      ] Meninggalkan regu saat menghadapi kesulitan di lapangan.Kunci:
+-      Pernyataan 1 dan 2
+139. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Persaudaraan antara kaum Muhajirin dan Anshar yang
+dibangun Nabi Muhammad saw. didasarkan pada ikatan keimanan (ukhuwah
+Islamiyah), bukan karena hubungan darah atau kesamaan suku."
+Jawaban: Benar
+140. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Sebagai seorang kepala negara di Madinah, Nabi
+Muhammad saw. tinggal di istana mewah yang dijaga ketat sehingga rakyat kecil
+sulit bertemu dengannya."
+Jawaban: Salah (Rasulullah saw. hidup sangat sederhana,
+tinggal di rumah berdinding tanah liat di samping Masjid Nabawi, dan selalu
+terbuka bagi seluruh rakyatnya).
+C. Tingkat Kesukaran: SULIT (Level Kognitif: Merefleksi
+& Mengevaluasi)
+141. (PG) Bacalah analisis sejarah berikut!
+Sebelum kedatangan Nabi Muhammad saw., suku Aus dan Khazraj
+di Yatsrib terus-menerus berperang selama puluhan tahun akibat adu domba.
+Setelah Nabi mempersaudarakan mereka dengan kaum Muhajirin, Madinah berubah
+menjadi kota yang kuat dan disegani.
+Evaluasi paling tepat mengenai kunci keberhasilan perubahan
+masyarakat Madinah tersebut adalah ....
+A. karena Kota Madinah memiliki senjata perang yang paling
+canggih di Jazirah Arab
+B. karena persatuan dan hilangnya fanatisme kesukuan yang
+digantikan oleh persaudaraan atas dasar iman dan keadilan
+C. karena seluruh penduduk Yatsrib dipaksa menyerahkan
+hartanya kepada pemerintah
+D. karena suku Aus dan Khazraj diasingkan ke luar kota
+Kunci: B
+142. (PG) Mengapa Piagam Madinah dianggap sebagai tonggak
+sejarah peradaban dunia yang sangat maju pada masanya?
+A. Karena Piagam Madinah adalah konstitusi tertulis pertama
+yang menjamin hak asasi manusia, kebebasan beragama, dan keadilan hukum bagi
+masyarakat majemuk (beragam suku dan agama).
+B. Karena Piagam Madinah hanya melindungi hak-hak umat Islam
+dan menghapus hak warga non-Muslim.
+C. Karena Piagam Madinah ditulis di atas lembaran emas
+murni.
+D. Karena isi Piagam Madinah melarang warga non-Muslim untuk
+berdagang di pasar Madinah.Kunci: A
+143. (PG) Perhatikan peristiwa sejarah berikut:
+Ketika beberapa kelompok Yahudi di Madinah melanggar isi
+kesepakatan Piagam Madinah dengan berkhianat dan membantu musuh menyerang kota
+dari dalam, Nabi Muhammad saw. menjatuhkan sanksi tegas sesuai aturan hukum
+yang telah disepakati bersama.
+Pelajaran penting tentang kepemimpinan yang dapat dievaluasi
+dari peristiwa tersebut adalah ....
+A. seorang pemimpin harus bersikap lemah agar disukai semua
+orang
+B. toleransi beragama harus tetap disertai penegakan hukum
+yang tegas dan adil terhadap siapa pun yang mengkhianati kesepakatan bersama
+C. perjanjian tertulis boleh dilanggar sewaktu-waktu jika
+menguntungkan kelompok sendiri
+D. pemimpin tidak perlu meminta pertanggungjawaban dari
+warga yang melanggar aturan
+Kunci: B
+144. (PG) Mengapa Nabi Muhammad saw. memilih membangun
+masjid terlebih dahulu sesampainya di Madinah, sebelum membangun istana
+pemerintahan atau benteng pertahanan?
+A. Karena membangun masjid membutuhkan biaya yang paling
+murah.
+B. Karena masjid adalah pusat pembinaan akhlak, persatuan
+umat, pendidikan, dan ketaatan kepada Allah yang menjadi pondasi utama kuatnya
+suatu negara.
+C. Karena di Madinah belum ada rumah warga yang bisa
+ditempati.
+D. Karena benteng pertahanan tidak diperlukan sama sekali di
+Madinah.Kunci: B
+145. (PG) Bandingkan kondisi kepemimpinan di Madinah dengan
+kehidupan berbangsa di Indonesia saat ini! Nilai sejarah Madinah manakah yang
+paling relevan untuk menjaga keutuhan bangsa Indonesia yang beragam suku dan
+agama?
+A. Menghapus semua perbedaan budaya agar menjadi satu suku
+yang sama.
+B. Menjunjung tinggi semangat persatuan, musyawarah mufakat,
+dan penghormatan terhadap keberagaman sebagaimana semangat Piagam Madinah.
+C. Mengutamakan kepentingan daerah sendiri di atas
+kepentingan bangsa.
+D. Menutup diri dari kerja sama dengan masyarakat yang
+berbeda latar belakang.Kunci: B
+146. (PGK) Analisislah dampak positif dari kebijakan ekonomi
+Nabi Muhammad saw. yang mendirikan Pasar Madinah bebas riba dan kecurangan!
+(Pilih tiga jawaban)
+- 
+-  [x]
+-      Perekonomian kaum Muhajirin bangkit dengan cepat tanpa terus bergantung
+-      pada bantuan kaum Anshar.
+- 
+-  [x]
+-      Terciptanya kepercayaan yang tinggi antara penjual dan pembeli karena
+-      kejujuran takaran dan timbangan.
+- 
+-  [x]
+-      Terhindarnya masyarakat miskin dari jeratan utang riba yang mencekik.
+- 
+-  [
+-      ] Para pedagang asing dilarang keras masuk ke wilayah Kota Madinah.Kunci:
+-      Pernyataan 1, 2, dan 3
+147. (PGK) Bacalah studi kasus berikut!
+Di sekolah terjadi perselisihan antara dua kelompok siswa
+akibat kesalahpahaman di media sosial. Kedua kelompok saling mengejek dan tidak
+mau bertegur sapa.
+Jika kita mengevaluasi cara Nabi Muhammad saw. mendamaikan
+suku Aus dan Khazraj di Madinah, langkah penyelesaian konflik manakah yang
+paling tepat diterapkan? (Pilih dua jawaban)
+- 
+-  [x]
+-      Mempertemukan kedua kelompok dalam forum musyawarah yang damai untuk
+-      meluruskan kesalahpahaman.
+- 
+-  [x]
+-      Mengingatkan bahwa permusuhan hanya merugikan kedua belah pihak dan
+-      merusak persaudaraan.
+- 
+-  [
+-      ] Membiarkan konflik berlarut-larut hingga salah satu kelompok menyerah.
+- 
+-  [
+-      ] Menyebarkan kembali pesan ejekan tersebut agar semua siswa tahu siapa
+-      yang salah.Kunci: Pernyataan 1 dan 2
+148. (PGK) Mengapa teladan kepemimpinan Nabi Muhammad saw.
+di Madinah tetap relevan hingga zaman modern sekarang? (Pilih dua jawaban)
+- 
+-  [x]
+-      Karena prinsip keadilan, kejujuran, musyawarah, dan kasih sayang adalah
+-      nilai universal yang dibutuhkan oleh manusia di setiap zaman.
+- 
+-  [x]
+-      Karena keberhasilan Nabi menggabungkan kecerdasan spiritual (ibadah) dan
+-      kecerdasan sosial (tata kelola masyarakat) terbukti menciptakan peradaban
+-      yang damai.
+- 
+-  [
+-      ] Karena sistem pemerintahan modern tidak memiliki aturan hukum tertulis.
+- 
+-  [
+-      ] Karena masyarakat modern hanya terdiri dari satu golongan yang
+-      seragam.Kunci: Pernyataan 1 dan 2
+149. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Keberhasilan hijrah dan kepemimpinan Nabi Muhammad
+saw. di Madinah mengajarkan bahwa kemajuan sebuah bangsa hanya dapat dicapai
+apabila pemimpin dan rakyatnya saling bekerja sama dalam kebaikan dan
+keadilan."
+Jawaban: Benar
+150. (B/S) Tentukan Benar atau Salah pernyataan berikut!
+"Toleransi yang dicontohkan Nabi Muhammad saw. dalam
+Piagam Madinah berarti menyamakan semua ajaran agama sehingga umat Islam boleh
+mengikuti ritual ibadah agama lain."
+Jawaban: Salah (Toleransi dalam Islam adalah saling
+menghormati hak beribadah masing-masing tanpa mencampuradukkan akidah dan
+ritual ibadah—lakum dīnukum wa liya dīn).
+
+materi sesuaikan dengan elemen. jadi tiap elemen memiliki bank soal 30 butir.
+guru bisa menambahkan jumlah elemen / materi, sehingga bank soal bisa bertambah.
+alur untuk siswa
+login, avatar, berada di halaman sekolah (tema latar gedung sekolah) dekat tiang bendera (bendera berkibar dengan efek bergoyang tertiup angin), mencari materi, mini game (sebagai uji pencapaian dari pemahaman materi).
+
+materi sebagai berikut:
+Elemen: Al-Qur'an dan Hadis
+Materi 1: Q.S. Al-‘Asr dan Hukum Bacaan Mim Sukun
+1. 
+2.  Informasi
+3.      Umum dan Menyambung Huruf Hijaiyah Q.S. Al-‘Asr
+- 
+-  Profil
+-      Surah: Q.S. Al-‘Asr adalah surah ke-103 dalam Al-Qur'an yang terdiri dari
+-      3 ayat. Surah ini tergolong surah Makkiyah (diturunkan di Makkah) dan
+-      namanya diambil dari kata pertama pada ayat pertama yang berarti
+-      "Demi Masa" atau "Waktu".
+- 
+-  Kaidah
+-      Merangkai Huruf Hijaiyah: Dalam menulis dan membaca Q.S. Al-‘Asr,
+-      huruf-huruf hijaiyah mengalami perubahan bentuk saat disambung (di awal,
+-      di tengah, dan di akhir kata). Namun, terdapat 6 huruf yang tidak bisa
+-      disambung dengan huruf sesudahnya, yaitu: ا (Alif), د
+-      (Dal), ذ
+-      (Dzal), ر
+-      (Ra), ز
+-      (Zai), و
+-      (Wau).
+- 
+-  Contoh
+-      Penguraian Kata (3 Huruf atau Lebih):
+- 
+-  وَالْعَصْرِ
+-      (Wal-‘asr): Terdiri dari huruf و - ا - ل - ع - ص - ر. (Huruf wau dan
+-      alif berdiri sendiri, sedangkan lam, ‘ain, shad, dan ra bersambung).
+- 
+-  الْإِنْسَانَ
+-      (Al-insāna): Terdiri dari huruf ا - ل - إ - ن - س - ا - ن.
+- 
+-  الصَّالِحَاتِ
+-      (Ash-shālihāti): Terdiri dari huruf ا - ل - ص - ا - ل - ح - ا - ت.
+2. Hukum Bacaan Mim Sukun ($\text{مْ}$)
+Apabila huruf Mim Sukun ($\text{مْ}$) bertemu dengan salah satu huruf
+hijaiyah selain alif, hukum bacaannya terbagi menjadi tiga:
+Hukum BacaanHuruf PertemuanCara MembacaContoh dalam Surah
+PendekIkhfa Syafawiب
+(Ba)Dibaca samar-samar di bibir dan didengungkan selama 2 harakat.تَرْمِيْهِمْ
+بِحِجَارَةٍ (Q.S. Al-Fil: 4)Idgham Mimi (Mutamatsilain)م
+(Mim)Dimasukkan/melebur ke huruf mim kedua disertai dengung 2 harakat.الَّذِيْ
+أَطْعَمَهُمْ مِنْ جُوْعٍ (Q.S. Quraisy: 4)Izhar SyafawiSemua huruf
+hijaiyah selain م
+dan بDibaca
+jelas di bibir tanpa dengung.أَلَمْ
+تَرَ كَيْفَ (Q.S. Al-Fil: 1)
+3. Refleksi Pesan Pokok Q.S. Al-‘Asr
+Allah Swt. bersumpah demi waktu bahwa semua manusia berada
+dalam kerugian, kecuali mereka yang memiliki 4 ciri berikut:
+1. 
+2.  Beriman
+3.      kepada Allah Swt. dengan sepenuh hati.
+4. 
+5.  Beramal
+6.      saleh, yaitu melakukan perbuatan baik yang bermanfaat (belajar rajin,
+7.      membantu orang tua, menjaga kebersihan).
+8. 
+9.  Saling
+10.      menasihati dalam kebenaran dengan cara yang santun.
+11. 
+12.  Saling
+13.      menasihati dalam kesabaran saat menghadapi ujian atau kesulitan.
+Elemen: Akidah
+Materi 2: Mengenal Allah Melalui Asmaul Husna
+1. 
+2.  Makna
+3.      dan Contoh Perilaku Asmaul Husna
+Asmaul HusnaArtiMakna SingkatContoh Perilaku TerpujiAl-Halim
+(الْحَلِيمُ)Maha
+PenyantunAllah tidak tergesa-gesa menghukum hamba-Nya yang bersalah, melainkan
+memberi kesempatan untuk bertobat.Tidak mudah marah saat teman melakukan
+kesalahan, berbicara lembut, dan mudah memaafkan.Asy-Syakur (الشَّكُورُ)Maha Mensyukuri /
+Maha Pembalas BudiAllah membalas setiap amal kebaikan hamba-Nya dengan pahala
+yang berlipat ganda.Berterima kasih saat diberi bantuan, menjaga fasilitas
+sekolah, dan menggunakan nikmat tubuh untuk kebaikan.Al-Hakim (الْحَكِيمُ)Maha
+BijaksanaSetiap ketetapan, aturan, dan ciptaan Allah memiliki tujuan dan hikmah
+yang tepat.Adil saat membagi tugas piket, berpikir sebelum bertindak, dan
+mematuhi peraturan di rumah maupun sekolah.Al-Wadud (الْوَدُودُ)Maha Pengasih /
+PencintaAllah mencintai hamba-Nya yang berbuat baik dengan kasih sayang yang
+tulus tanpa pamrih.Menyayangi adik, menghormati guru dan orang tua, serta
+menjenguk teman yang sedang sakit.
+2. Praktik dan Evaluasi Diri (Muhasabah)
+- 
+-  Praktik
+-      Nyata: Membiasakan mengucapkan kalimat Alhamdulillah saat mendapat nikmat
+-      (meneladani Asy-Syakur) dan menahan emosi saat diganggu teman (meneladani
+-      Al-Halim).
+- 
+-  Langkah
+-      Evaluasi Sikap: Sebelum tidur, siswa merenung: "Apakah hari ini saya
+-      sudah menyakiti perasaan teman? Apakah saya sudah bersyukur atas makanan
+-      hari ini?" Jika belum, segera beristighfar dan bertekad
+-      memperbaikinya esok hari.
+Elemen: Akhlak
+Materi 3: Akhlak kepada Allah Swt. (Berdoa dan Bertawakal)
+1. 
+2.  Pengertian
+3.      Berdoa dan Bertawakal
+- 
+-  Berdoa
+-      adalah memohon atau meminta pertolongan, perlindungan, serta kebaikan
+-      hanya kepada Allah Swt. dengan penuh kerendahan hati. Doa adalah inti dari
+-      ibadah.
+- 
+-  Bertawakal
+-      adalah berserah diri sepenuhnya kepada Allah Swt. atas hasil dari suatu
+-      urusan, setelah melakukan usaha (ikhtiar) dan berdoa secara maksimal.
+2. Adab Berdoa dan Cara Bertawakal
+- 
+-  Adab
+-      Berdoa yang Benar:
+1. 
+2.  Dalam
+3.      keadaan suci (berwudu) dan menghadap kiblat jika memungkinkan.
+4. 
+5.  Mengawali
+6.      dengan memuji Allah (Alhamdulillah) dan membaca salawat kepada Nabi
+7.      Muhammad saw.
+8. 
+9.  Mengangkat
+10.      kedua tangan dan merendahkan suara (tidak berteriak).
+11. 
+12.  Yakin
+13.      bahwa doa akan dikabulkan serta tidak tergesa-gesa meminta hasil.
+14. 
+15.  Menutup
+16.      doa dengan salawat dan bacaan hamdalah.
+- 
+-  Cara
+-      Bertawakal dalam Kehidupan Siswa:
+- 
+-  Contoh
+-      saat ujian sekolah: Belajar dengan tekun di rumah (ikhtiar), berdoa
+-      sebelum mengerjakan soal (doa), lalu menyerahkan nilai terbaik kepada
+-      Allah tanpa menyontek (tawakal).
+3. Refleksi Keputusan Sikap
+Tawakal bukanlah pasrah tanpa usaha. Jika seseorang
+menginginkan nilai bagus tetapi hanya berdoa tanpa belajar, itu bukan tawakal,
+melainkan bermalas-malasan. Sebaliknya, berusaha keras tanpa berdoa adalah
+bentuk kesombongan. Keduanya harus berjalan seimbang.
+Elemen: Fiqih
+Materi 4: Ketentuan Puasa Wajib dan Puasa Sunnah
+1. 
+2.  Pengertian
+3.      dan Kategori Puasa
+ 
+Puasa (Shaum) secara bahasa berarti menahan diri. Secara
+istilah, puasa adalah menahan diri dari makan, minum, serta segala hal yang
+membatalkan puasa mulai dari terbit fajar (waktu Subuh) hingga terbenam
+matahari (waktu Magrib) disertai dengan niat.
+- 
+-  Kategori
+-      Puasa Wajib:
+1. 
+2.  Puasa
+3.      Ramadan: Dilaksanakan sebulan penuh pada bulan Ramadan bagi umat Islam
+4.      yang memenuhi syarat.
+5. 
+6.  Puasa
+7.      Qadha: Puasa pengganti untuk membayar utang puasa Ramadan yang
+8.      ditinggalkan karena alasan syar'i (sakit atau musafir).
+9. 
+10.  Puasa
+11.      Nazar: Puasa yang wajib dilakukan karena seseorang pernah berjanji kepada
+12.      Allah jika keinginannya tercapai.
+13. 
+14.  Puasa
+15.      Kafarat: Puasa sebagai denda akibat melanggar larangan tertentu dalam
+16.      agama.
+- 
+-  Kategori
+-      Puasa Sunnah:
+1. 
+2.  Puasa
+3.      Senin dan Kamis.
+4. 
+5.  Puasa
+6.      Syawal: Dilaksanakan selama 6 hari pada bulan Syawal setelah Idulfitri.
+7. 
+8.  Puasa
+9.      Arafah: Dilaksanakan tanggal 9 Zulhijah (bagi yang tidak sedang berhaji).
+10. 
+11.  Puasa
+12.      Asyura: Dilaksanakan tanggal 10 Muharam.
+13. 
+14.  Puasa
+15.      Ayyamul Bidh: Dilaksanakan setiap tanggal 13, 14, dan 15 pada bulan
+16.      Hijriah.
+2. Ketentuan Puasa
+- 
+-  Syarat
+-      Wajib Puasa: Beragama Islam, baligh (dewasa), berakal sehat, dan mampu
+-      (kuat) berpuasa.
+- 
+-  Syarat
+-      Sah Puasa: Islam, mumayyiz (dapat membedakan baik dan buruk), suci dari
+-      haid dan nifas, serta dilaksanakan pada waktu yang diperbolehkan berpuasa.
+- 
+-  Rukun
+-      Puasa: (1) Niat di malam hari sebelum fajar, dan (2) Menahan diri dari
+-      segala yang membatalkan puasa dari terbit fajar hingga terbenam matahari.
+- 
+-  Hal
+-      yang Membatalkan Puasa: Makan dan minum dengan sengaja, muntah dengan
+-      sengaja, hilang akal (pingsan/gila), murtad, serta datang bulan
+-      (haid/nifas).
+3. Evaluasi Diri dalam Berpuasa
+Puasa yang benar tidak hanya menahan lapar dan haus, tetapi
+juga menjaga lisan dari berkata kotor/bohong, menjaga mata dari melihat hal
+buruk, dan menahan emosi. Siswa diajak mengevaluasi apakah puasanya sudah
+membuat dirinya lebih sabar dan peduli terhadap fakir miskin.
+Elemen: Sejarah Peradaban Islam
+Materi 5: Kepemimpinan Nabi Muhammad saw. di Madinah
+1. 
+2.  Strategi
+3.      Kepemimpinan Nabi Muhammad saw. di Madinah
+ 
+Setelah hijrah dari Makkah ke Yatsrib (yang kemudian diubah
+namanya menjadi Madinah Al-Munawwarah), Rasulullah saw. membangun fondasi
+masyarakat yang damai dan maju melalui empat langkah utama:
+1. 
+2.  Membangun
+3.      Masjid (Masjid Quba dan Masjid Nabawi): Masjid tidak hanya dijadikan
+4.      tempat salat, tetapi juga pusat pendidikan, musyawarah pemerintahan, dan
+5.      kegiatan sosial.
+6. 
+7.  Mempersaudarakan
+8.      Kaum Muhajirin dan Anshar: Rasulullah mempersaudarakan pendatang dari
+9.      Makkah (Muhajirin) dengan penduduk asli Madinah (Anshar) berdasarkan
+10.      ikatan iman sehingga tercipta solidaritas dan gotong royong yang kuat.
+11. 
+12.  Menyusun
+13.      Piagam Madinah (Shahifah Madinah): Konstitusi tertulis pertama di dunia
+14.      yang mengatur kerukunan, hak, dan kewajiban antara umat Islam dengan kaum
+15.      non-Muslim (Yahudi dan suku-suku lain) di Madinah untuk saling melindungi
+16.      dan menjaga kedamaian.
+17. 
+18.  Membangun
+19.      Perekonomian dan Pasar Madinah: Rasulullah mendirikan pasar yang jujur,
+20.      adil, serta bebas dari penipuan dan riba.
+2. Meneladani Kepemimpinan Rasulullah saw.
+- 
+-  Musyawarah:
+-      Menyelesaikan masalah di kelas atau kelompok belajar dengan berdiskusi,
+-      bukan memaksakan kehendak sendiri.
+- 
+-  Toleransi:
+-      Menghormati teman yang berbeda suku, budaya, maupun agama.
+- 
+-  Amanah
+-      dan Jujur: Menjalankan tugas sebagai ketua kelas atau petugas piket dengan
+-      penuh tanggung jawab.
+3. Evaluasi Peristiwa Kepemimpinan di Madinah
+Keberhasilan Nabi Muhammad saw. memimpin Madinah membuktikan
+bahwa kunci kemajuan suatu masyarakat adalah persatuan, keadilan hukum (Piagam
+Madinah), dan kasih sayang. Tanpa persatuan antara kaum Muhajirin dan Anshar,
+masyarakat Madinah akan mudah terpecah belah oleh musuh dari luar.
+
+
+buatlah aplikasi sesuai dengan apa yang direncanakan 
