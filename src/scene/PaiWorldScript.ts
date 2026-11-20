@@ -35,6 +35,7 @@ export interface WorldInteractionCallbacks {
   onClickCraftTable?: () => void;
   onClickArtifact?: (index: number) => void;
   onPlayerMoveSync?: (pos: { x: number; y: number; z: number }, rotY: number) => void;
+  onQuickSelectOption?: (optionIndex: number) => void;
 }
 
 interface BurstParticle {
@@ -77,6 +78,11 @@ export class PaiWorldScript extends xb.Script {
 
   private keys = new Set<string>();
   private joyVec = { x: 0, y: 0 };
+  private walkTarget: THREE.Vector3 | null = null;
+  private walkMarker: THREE.Mesh | null = null;
+  private groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.08);
+  private minigameOffset = new THREE.Vector3(0, 0, 0);
+  private lastJoyLaneAt = 0;
   private raycaster = new THREE.Raycaster();
   private pointerNdc = new THREE.Vector2();
   private camPos = new THREE.Vector3(0, 6, 12);
@@ -90,6 +96,11 @@ export class PaiWorldScript extends xb.Script {
 
   private onKeyDownBound = (e: KeyboardEvent) => this.handleKeyDown(e);
   private onKeyUpBound = (e: KeyboardEvent) => this.handleKeyUp(e);
+  private onWindowBlurBound = () => {
+    this.keys.clear();
+    this.joyVec.x = 0;
+    this.joyVec.y = 0;
+  };
   private onPointerDownBound = (e: PointerEvent) => this.handlePointerDown(e);
   private onResizeBound = () => this.applyCameraViewportOffset();
 
@@ -162,8 +173,24 @@ export class PaiWorldScript extends xb.Script {
     this.playerAvatar.group.position.copy(this.playerPos);
     this.add(this.playerAvatar.group);
 
+    // Tap-to-walk target ring indicator on Schoolyard floor
+    this.walkMarker = new THREE.Mesh(
+      new THREE.RingGeometry(0.32, 0.5, 24),
+      new THREE.MeshBasicMaterial({
+        color: 0x34d399,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.85,
+      })
+    );
+    this.walkMarker.rotation.x = -Math.PI / 2;
+    this.walkMarker.position.y = 0.12;
+    this.walkMarker.visible = false;
+    this.add(this.walkMarker);
+
     window.addEventListener('keydown', this.onKeyDownBound);
     window.addEventListener('keyup', this.onKeyUpBound);
+    window.addEventListener('blur', this.onWindowBlurBound);
     window.addEventListener('resize', this.onResizeBound);
     renderer.domElement.addEventListener('pointerdown', this.onPointerDownBound);
 
@@ -255,8 +282,18 @@ export class PaiWorldScript extends xb.Script {
   }
 
   setJoystick(x: number, y: number): void {
-    this.joyVec.x = x;
-    this.joyVec.y = y;
+    this.joyVec.x = THREE.MathUtils.clamp(x, -1, 1);
+    this.joyVec.y = THREE.MathUtils.clamp(y, -1, 1);
+    if (Math.hypot(x, y) > 0.15) {
+      this.walkTarget = null;
+      if (this.walkMarker) this.walkMarker.visible = false;
+    }
+  }
+
+  steerLane(delta: -1 | 1): void {
+    if (this.viewMode === 'minigame' && this.activeGameId === 'grand_prix') {
+      this.playerLane = Math.max(0, Math.min(3, this.playerLane + delta));
+    }
   }
 
   triggerJump(): void {
@@ -298,6 +335,11 @@ export class PaiWorldScript extends xb.Script {
 
     if (mode === 'minigame') {
       this.clearWorld();
+      this.walkTarget = null;
+      if (this.walkMarker) this.walkMarker.visible = false;
+      this.minigameOffset.set(0, 0, 0);
+      this.playerVelY = 0;
+      this.playerGrounded = true;
       this.activeWorld = buildMinigameWorld(this.activeGameId);
       this.add(this.activeWorld.root);
       xb.core.scene.fog = new THREE.Fog(
@@ -490,7 +532,17 @@ export class PaiWorldScript extends xb.Script {
     const tag = (e.target as HTMLElement | null)?.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
     const key = e.key.toLowerCase();
+
+    if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(key)) {
+      e.preventDefault();
+    }
+
     this.keys.add(key);
+
+    if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
+      this.walkTarget = null;
+      if (this.walkMarker) this.walkMarker.visible = false;
+    }
 
     if (key === ' ') {
       this.triggerJump();
@@ -501,6 +553,12 @@ export class PaiWorldScript extends xb.Script {
       } else if (key === 'd' || key === 'arrowright') {
         this.playerLane = Math.min(3, this.playerLane + 1);
       }
+    }
+    if (this.viewMode === 'minigame') {
+      if (key === '1') this.callbacks.onQuickSelectOption?.(0);
+      else if (key === '2') this.callbacks.onQuickSelectOption?.(1);
+      else if (key === '3') this.callbacks.onQuickSelectOption?.(2);
+      else if (key === '4') this.callbacks.onQuickSelectOption?.(3);
     }
   }
 
@@ -520,23 +578,39 @@ export class PaiWorldScript extends xb.Script {
 
     this.raycaster.setFromCamera(this.pointerNdc, xb.core.camera);
     const hits = this.raycaster.intersectObjects(this.activeWorld.interactables, true);
-    if (hits.length === 0) return;
+    if (hits.length > 0) {
+      const meta = hits[0].object.userData?.interact as InteractiveHitMeta | undefined;
+      if (meta) {
+        if (meta.kind === 'material_kiosk' && meta.elementId) {
+          this.callbacks.onClickKiosk?.(meta.elementId);
+        } else if (meta.kind === 'answer_option' && typeof meta.optionIndex === 'number') {
+          this.callbacks.onClickOption?.(meta.optionIndex);
+        } else if (meta.kind === 'portal' && meta.difficulty) {
+          this.callbacks.onClickPortal?.(meta.difficulty);
+        } else if (meta.kind === 'dice') {
+          this.callbacks.onClickDice?.();
+        } else if (meta.kind === 'craft_table') {
+          this.callbacks.onClickCraftTable?.();
+        } else if (meta.kind === 'artifact_capsule' && typeof meta.optionIndex === 'number') {
+          this.callbacks.onClickArtifact?.(meta.optionIndex);
+        }
+        return;
+      }
+    }
 
-    const meta = hits[0].object.userData?.interact as InteractiveHitMeta | undefined;
-    if (!meta) return;
-
-    if (meta.kind === 'material_kiosk' && meta.elementId) {
-      this.callbacks.onClickKiosk?.(meta.elementId);
-    } else if (meta.kind === 'answer_option' && typeof meta.optionIndex === 'number') {
-      this.callbacks.onClickOption?.(meta.optionIndex);
-    } else if (meta.kind === 'portal' && meta.difficulty) {
-      this.callbacks.onClickPortal?.(meta.difficulty);
-    } else if (meta.kind === 'dice') {
-      this.callbacks.onClickDice?.();
-    } else if (meta.kind === 'craft_table') {
-      this.callbacks.onClickCraftTable?.();
-    } else if (meta.kind === 'artifact_capsule' && typeof meta.optionIndex === 'number') {
-      this.callbacks.onClickArtifact?.(meta.optionIndex);
+    // Touch / Click-to-Walk on empty ground in Schoolyard (great for phones & tablets!)
+    if (this.viewMode === 'schoolyard') {
+      const groundHit = new THREE.Vector3();
+      if (this.raycaster.ray.intersectPlane(this.groundPlane, groundHit)) {
+        groundHit.x = THREE.MathUtils.clamp(groundHit.x, -11.0, 11.0);
+        groundHit.z = THREE.MathUtils.clamp(groundHit.z, -5.6, 9.4);
+        groundHit.y = 0.08;
+        this.walkTarget = groundHit;
+        if (this.walkMarker) {
+          this.walkMarker.position.set(groundHit.x, 0.12, groundHit.z);
+          this.walkMarker.visible = true;
+        }
+      }
     }
   }
 
@@ -610,12 +684,41 @@ export class PaiWorldScript extends xb.Script {
       if (this.keys.has('a') || this.keys.has('arrowleft')) mx -= 1;
       if (this.keys.has('d') || this.keys.has('arrowright')) mx += 1;
 
-      const moving = Math.hypot(mx, mz) > 0.1;
+      // Tap-to-walk fallback when no manual directional input is active
+      if (Math.hypot(mx, mz) <= 0.1 && this.walkTarget) {
+        const dx = this.walkTarget.x - this.playerPos.x;
+        const dz = this.walkTarget.z - this.playerPos.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist > 0.28) {
+          mx = dx / dist;
+          mz = dz / dist;
+        } else {
+          this.walkTarget = null;
+          if (this.walkMarker) this.walkMarker.visible = false;
+        }
+      }
+
+      if (this.walkMarker && this.walkMarker.visible) {
+        const pulse = 1 + Math.sin(this.clockElapsed * 6) * 0.14;
+        this.walkMarker.scale.setScalar(pulse);
+      }
+
+      const inputMag = Math.hypot(mx, mz);
+      const moving = inputMag > 0.1;
       if (moving) {
-        const len = Math.hypot(mx, mz);
-        const speed = 6.2;
-        this.playerPos.x = THREE.MathUtils.clamp(this.playerPos.x + (mx / len) * speed * dt, -11.2, 11.2);
-        this.playerPos.z = THREE.MathUtils.clamp(this.playerPos.z + (mz / len) * speed * dt, -5.8, 9.6);
+        const scale = Math.min(1, inputMag);
+        const sprintBoost = this.keys.has('shift') ? 1.38 : 1.0;
+        const speed = 6.4 * scale * sprintBoost;
+        this.playerPos.x = THREE.MathUtils.clamp(
+          this.playerPos.x + (mx / inputMag) * speed * dt,
+          -11.2,
+          11.2
+        );
+        this.playerPos.z = THREE.MathUtils.clamp(
+          this.playerPos.z + (mz / inputMag) * speed * dt,
+          -5.8,
+          9.6
+        );
         if (this.playerAvatar) {
           this.playerAvatar.group.rotation.y = Math.atan2(mx, mz);
         }
@@ -669,37 +772,101 @@ export class PaiWorldScript extends xb.Script {
         if (this.feedbackTimer === 0) this.feedbackAnim = null;
       }
 
+      let mx = this.joyVec.x;
+      let mz = this.joyVec.y;
+      if (this.keys.has('w') || this.keys.has('arrowup')) mz -= 1;
+      if (this.keys.has('s') || this.keys.has('arrowdown')) mz += 1;
+      if (this.keys.has('a') || this.keys.has('arrowleft')) mx -= 1;
+      if (this.keys.has('d') || this.keys.has('arrowright')) mx += 1;
+      const inputMag = Math.hypot(mx, mz);
+      const isMovingInput = inputMag > 0.14;
+
+      // Touchscreen joystick lane steering in Grand Prix
+      if (this.activeGameId === 'grand_prix' && Math.abs(this.joyVec.x) > 0.55) {
+        const now = performance.now();
+        if (now - this.lastJoyLaneAt > 260) {
+          this.lastJoyLaneAt = now;
+          this.playerLane = Math.max(0, Math.min(3, this.playerLane + (this.joyVec.x > 0 ? 1 : -1)));
+        }
+      }
+
+      // Jump arc offset (works in ALL minigames!)
+      if (!this.playerGrounded) {
+        this.playerVelY -= 19 * dt;
+        this.minigameOffset.y += this.playerVelY * dt;
+        if (this.minigameOffset.y <= 0) {
+          this.minigameOffset.y = 0;
+          this.playerVelY = 0;
+          this.playerGrounded = true;
+        }
+      }
+
       if (this.activeWorld.getPlayerTargetPos) {
         const target = this.activeWorld.getPlayerTargetPos(this.currentProgress, this.playerLane);
-        this.playerPos.lerp(target, Math.min(1, dt * 6.5));
+
+        // Allow responsive local step-around on platform/stage via touch joystick or WASD/Arrows
+        if (this.activeGameId !== 'grand_prix' && isMovingInput) {
+          const speed = 4.2 * Math.min(1, inputMag);
+          this.minigameOffset.x = THREE.MathUtils.clamp(
+            this.minigameOffset.x + (mx / inputMag) * speed * dt,
+            -2.1,
+            2.1
+          );
+          this.minigameOffset.z = THREE.MathUtils.clamp(
+            this.minigameOffset.z + (mz / inputMag) * speed * dt,
+            -1.2,
+            1.2
+          );
+          if (this.playerAvatar) {
+            this.playerAvatar.group.rotation.y = Math.atan2(mx, mz);
+          }
+        } else if (this.activeGameId === 'grand_prix') {
+          this.minigameOffset.x = 0;
+          this.minigameOffset.z = 0;
+        }
+
+        const goal = new THREE.Vector3(
+          target.x + this.minigameOffset.x,
+          target.y + this.minigameOffset.y,
+          target.z + this.minigameOffset.z
+        );
+        this.playerPos.lerp(goal, Math.min(1, dt * 8.5));
       } else {
         // Free-roam inside Edu-Craft / Maze / Portal / Astro
-        let mx = this.joyVec.x;
-        let mz = this.joyVec.y;
-        if (this.keys.has('w') || this.keys.has('arrowup')) mz -= 1;
-        if (this.keys.has('s') || this.keys.has('arrowdown')) mz += 1;
-        if (this.keys.has('a') || this.keys.has('arrowleft')) mx -= 1;
-        if (this.keys.has('d') || this.keys.has('arrowright')) mx += 1;
-        if (Math.hypot(mx, mz) > 0.1) {
-          const len = Math.hypot(mx, mz);
-          this.playerPos.x = THREE.MathUtils.clamp(this.playerPos.x + (mx / len) * 5.2 * dt, -6.8, 6.8);
-          this.playerPos.z = THREE.MathUtils.clamp(this.playerPos.z + (mz / len) * 5.2 * dt, -5.2, 5.2);
+        const baseY = this.activeWorld.playerSpawn.y;
+        if (isMovingInput) {
+          const speed = 5.6 * Math.min(1, inputMag);
+          this.playerPos.x = THREE.MathUtils.clamp(
+            this.playerPos.x + (mx / inputMag) * speed * dt,
+            -6.8,
+            6.8
+          );
+          this.playerPos.z = THREE.MathUtils.clamp(
+            this.playerPos.z + (mz / inputMag) * speed * dt,
+            -5.2,
+            5.2
+          );
           if (this.playerAvatar) {
             this.playerAvatar.group.rotation.y = Math.atan2(mx, mz);
           }
         }
+        this.playerPos.y = baseY + this.minigameOffset.y;
       }
 
       if (this.playerAvatar) {
         this.playerAvatar.group.position.copy(this.playerPos);
         if (this.feedbackAnim) {
           this.playerAvatar.animState = this.feedbackAnim;
+        } else if (!this.playerGrounded) {
+          this.playerAvatar.animState = 'jump';
         } else if (this.activeGameId === 'grand_prix') {
           this.playerAvatar.animState = 'drive';
           this.playerAvatar.group.rotation.y = Math.PI;
         } else if (this.activeGameId === 'astro_scanner') {
           this.playerAvatar.animState = 'fly';
-          this.playerAvatar.group.rotation.y = Math.PI;
+          if (!isMovingInput) this.playerAvatar.group.rotation.y = Math.PI;
+        } else if (isMovingInput) {
+          this.playerAvatar.animState = 'walk';
         } else {
           this.playerAvatar.animState = 'idle';
         }
@@ -729,10 +896,17 @@ export class PaiWorldScript extends xb.Script {
   dispose(): void {
     window.removeEventListener('keydown', this.onKeyDownBound);
     window.removeEventListener('keyup', this.onKeyUpBound);
+    window.removeEventListener('blur', this.onWindowBlurBound);
     window.removeEventListener('resize', this.onResizeBound);
     xb.core.renderer?.domElement?.removeEventListener('pointerdown', this.onPointerDownBound);
     this.clearWorld();
     this.playerAvatar?.dispose();
+    if (this.walkMarker) {
+      this.remove(this.walkMarker);
+      this.walkMarker.geometry.dispose();
+      (this.walkMarker.material as THREE.Material).dispose();
+      this.walkMarker = null;
+    }
     for (const entry of this.peerAvatars.values()) {
       entry.avatar.dispose();
     }

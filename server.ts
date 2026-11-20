@@ -93,6 +93,15 @@ const mission: MissionConfig = {
   endsAt: null,
 };
 
+let activeRoomCode = 'PAI2026';
+
+function normalizeRoomCode(raw: unknown): string {
+  return String(raw || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9-]/g, '')
+    .slice(0, 12);
+}
+
 const participants = new Map<string, ParticipantState>();
 const socketToParticipantId = new Map<WebSocket, string>();
 const teacherSockets = new Set<WebSocket>();
@@ -198,6 +207,7 @@ function computeRanks(): ParticipantState[] {
 
 function getSnapshot(): RoomSnapshot {
   return {
+    roomCode: activeRoomCode,
     mission: { ...mission },
     participants: computeRanks(),
     testimonials: persisted.testimonials.slice(-60),
@@ -401,9 +411,33 @@ async function startServer(): Promise<void> {
     return { ok: true, message: chatMsg };
   };
 
+  const validateStudentRoomCode = (
+    msg: Record<string, unknown>
+  ): { ok: true } | { ok: false; error: string } => {
+    const id = typeof msg.id === 'string' ? msg.id.trim() : '';
+    const isExistingParticipant = Boolean(id && participants.has(id));
+    const entered = normalizeRoomCode(msg.roomCode);
+
+    if (entered && entered === activeRoomCode) {
+      return { ok: true };
+    }
+    if (isExistingParticipant && !entered) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      error: `Kode Ruang (Enter Code) tidak cocok! Minta kode yang sama persis dari Guru kamu.`,
+    };
+  };
+
   // HTTP realtime login endpoint (instant registration + broadcasts to all WS clients)
   app.post('/api/student/join', (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
+    const codeCheck = validateStudentRoomCode(body);
+    if (!codeCheck.ok) {
+      res.status(403).json({ ok: false, error: codeCheck.error });
+      return;
+    }
     const { participant, isNew } = registerStudent(body);
     const snap = getSnapshot();
     if (isNew) {
@@ -412,6 +446,26 @@ async function startServer(): Promise<void> {
       broadcastSnapshot();
     }
     res.json({ ok: true, id: participant.id, snapshot: snap });
+  });
+
+  app.post('/api/teacher/login', (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const code = String(body.code || '').trim().toLowerCase();
+    const sekolah = String(body.sekolah || '').trim();
+    const reqRoom = normalizeRoomCode(body.roomCode);
+    if (code === ADMIN_CODE && sekolah.length >= 2) {
+      if (reqRoom.length >= 3) {
+        activeRoomCode = reqRoom;
+      }
+      const snap = getSnapshot();
+      broadcastSnapshot();
+      res.json({ ok: true, sekolah, roomCode: activeRoomCode, snapshot: snap });
+      return;
+    }
+    res.status(403).json({
+      ok: false,
+      error: 'Kode akun guru harus "gpaibeji" dan nama sekolah wajib diisi.',
+    });
   });
 
   app.post('/api/student/leave', (req, res) => {
@@ -666,6 +720,11 @@ async function startServer(): Promise<void> {
       }
 
       if (type === 'student:join') {
+        const codeCheck = validateStudentRoomCode(msg);
+        if (!codeCheck.ok) {
+          sendJson(ws, { type: 'student:join_error', error: codeCheck.error });
+          return;
+        }
         const { participant, isNew } = registerStudent(msg);
         socketToParticipantId.set(ws, participant.id);
         const snap = getSnapshot();
@@ -878,19 +937,41 @@ async function startServer(): Promise<void> {
         return;
       }
 
-      // === TEACHER ADMIN AUTH & MISSION APPROVAL ===
+      // === TEACHER ADMIN AUTH & ROOM CODE ===
       if (type === 'teacher:login') {
         const code = String(msg.code || '').trim().toLowerCase();
         const sekolah = String(msg.sekolah || '').trim();
+        const reqRoom = normalizeRoomCode(msg.roomCode);
         if (code === ADMIN_CODE && sekolah.length >= 2) {
           teacherSockets.add(ws);
-          sendJson(ws, { type: 'teacher:auth', ok: true, sekolah, snapshot: getSnapshot() });
+          if (reqRoom.length >= 3) {
+            activeRoomCode = reqRoom;
+          }
+          const snap = getSnapshot();
+          sendJson(ws, {
+            type: 'teacher:auth',
+            ok: true,
+            sekolah,
+            roomCode: activeRoomCode,
+            snapshot: snap,
+          });
+          broadcastSnapshot();
         } else {
           sendJson(ws, {
             type: 'teacher:auth',
             ok: false,
             error: 'Kode akun guru harus "gpaibeji" dan nama sekolah wajib diisi.',
           });
+        }
+        return;
+      }
+
+      if (type === 'teacher:set_room_code') {
+        if (!teacherSockets.has(ws)) return;
+        const nextCode = normalizeRoomCode(msg.roomCode);
+        if (nextCode.length >= 3) {
+          activeRoomCode = nextCode;
+          broadcastSnapshot();
         }
         return;
       }

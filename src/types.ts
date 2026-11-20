@@ -181,6 +181,7 @@ export interface MinigameMeta {
 }
 
 export interface RoomSnapshot {
+  roomCode: string;
   mission: MissionConfig;
   participants: ParticipantState[];
   testimonials: TestimonialItem[];

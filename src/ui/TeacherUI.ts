@@ -13,6 +13,7 @@ import { paiBank } from '../data/paiBank.ts';
 import { realtimeClient } from '../services/RealtimeClient.ts';
 import { soundFX } from '../audio/SoundFX.ts';
 import { ChatSidebar } from './ChatSidebar.ts';
+import { TeacherAnalyticsOverlay } from './TeacherAnalyticsOverlay.ts';
 import { clearSession, saveSession } from '../services/SessionStorage.ts';
 
 export type TeacherTab = 'misi' | 'leaderboard' | 'materi' | 'soal' | 'laporan';
@@ -21,11 +22,14 @@ export class TeacherUI {
   private container: HTMLElement;
   private sekolah = '';
   private adminCode = 'gpaibeji';
+  private roomCode = 'PAI2026';
   private activeTab: TeacherTab = 'misi';
   private snapshot: RoomSnapshot | null = null;
   private onLogout: () => void;
   private onToast: (msg: string) => void;
   private exportingExcel = false;
+  private isConnected = true;
+  private recentLoginIds = new Map<string, number>();
 
   // Local mission draft synced with server
   private selectedElements = new Set<string>(['quran_hadis', 'akidah', 'akhlak', 'fiqih', 'spi']);
@@ -35,10 +39,11 @@ export class TeacherUI {
   private questionFilterElement = 'all';
   private timerInterval: ReturnType<typeof setInterval> | null = null;
 
-  // Persistent moderated chat sidebar state
-  private chatOpen = window.innerWidth >= 1024;
+  // Persistent moderated chat sidebar state (active by default on desktop/tablet)
+  private chatOpen = window.innerWidth >= 900;
   private unreadChatCount = 0;
   private chatSidebar: ChatSidebar;
+  private analyticsOverlay: TeacherAnalyticsOverlay;
   private mounted = false;
 
   constructor(
@@ -55,13 +60,41 @@ export class TeacherUI {
       senderName: 'Guru PAI (Admin)',
       onToast: this.onToast,
     });
+
+    this.analyticsOverlay = new TeacherAnalyticsOverlay({
+      onClose: () => {},
+      onExportExcel: () => {
+        void this.downloadExcelReport();
+      },
+      onFocusElement: (elementId, elementName) => {
+        this.selectedElements = new Set([elementId]);
+        this.pushMissionConfig();
+        this.analyticsOverlay.close();
+        this.activeTab = 'misi';
+        this.persistTeacherSession();
+        this.renderNav();
+        this.renderMainContent();
+        this.onToast(
+          `Misi berikutnya difokuskan ke elemen "${elementName}" untuk penguatan kelas!`
+        );
+      },
+    });
   }
 
-  mount(sekolah: string, snapshot: RoomSnapshot | null, initialTab?: TeacherTab, code = 'gpaibeji'): void {
+  mount(
+    sekolah: string,
+    snapshot: RoomSnapshot | null,
+    initialTab?: TeacherTab,
+    code = 'gpaibeji',
+    roomCode?: string
+  ): void {
     this.sekolah = sekolah;
     this.adminCode = code;
+    this.roomCode =
+      (roomCode || snapshot?.roomCode || this.roomCode || 'PAI2026').toUpperCase();
     if (initialTab) this.activeTab = initialTab;
     this.mounted = true;
+    this.isConnected = realtimeClient.connected;
     this.persistTeacherSession();
     this.chatSidebar.setOptions({ senderName: `Guru PAI · ${sekolah}` });
     if (snapshot) {
@@ -82,10 +115,17 @@ export class TeacherUI {
     saveSession({
       role: 'teacher',
       code: this.adminCode,
+      roomCode: this.roomCode,
       sekolah: this.sekolah,
       activeTab: this.activeTab,
       savedAt: Date.now(),
     });
+  }
+
+  openAnalyticsOverlay(): void {
+    if (!this.mounted) return;
+    soundFX.playClick();
+    this.analyticsOverlay.open(this.container, this.snapshot);
   }
 
   async downloadExcelReport(): Promise<void> {
@@ -122,6 +162,7 @@ export class TeacherUI {
       clearInterval(this.timerInterval);
       this.timerInterval = null;
     }
+    this.analyticsOverlay.destroy();
     this.chatSidebar.unmount();
     if (clearSaved) {
       realtimeClient.clearTeacherSession();
@@ -136,6 +177,10 @@ export class TeacherUI {
     this.selectedGameId = snapshot.mission.gameId;
     this.questionDurationSec = snapshot.mission.questionDurationSec;
     this.gameDurationMin = snapshot.mission.gameDurationMin;
+    if (snapshot.roomCode && snapshot.roomCode !== this.roomCode) {
+      this.roomCode = snapshot.roomCode;
+      this.persistTeacherSession();
+    }
     if (snapshot.mission.elementIds.length > 0) {
       this.selectedElements = new Set(snapshot.mission.elementIds);
     }
@@ -146,6 +191,7 @@ export class TeacherUI {
     if (!this.mounted) return;
 
     this.chatSidebar.updateMessages(snapshot);
+    this.analyticsOverlay.update(snapshot);
     this.updateHeaderCounters();
     this.updateClockDisplay();
 
@@ -165,6 +211,21 @@ export class TeacherUI {
     }
   }
 
+  handleStudentLoggedIn(
+    participant: ParticipantState,
+    isNew: boolean,
+    snapshot: RoomSnapshot
+  ): void {
+    this.recentLoginIds.set(participant.id, Date.now());
+    soundFX.playCorrect();
+    this.onToast(
+      isNew
+        ? `Peserta baru login: ${participant.nama} (Kelas ${participant.kelas} · ${participant.sekolah})`
+        : `Peserta kembali online: ${participant.nama} (Kelas ${participant.kelas})`
+    );
+    this.applySnapshot(snapshot, true);
+  }
+
   handleChatMessage(message: ChatMessage, snapshot: RoomSnapshot): void {
     this.snapshot = snapshot;
     if (!this.mounted) return;
@@ -175,12 +236,56 @@ export class TeacherUI {
     }
   }
 
+  handleChatTyping(senderName: string, senderId: string): void {
+    if (!this.mounted) return;
+    this.chatSidebar.showTyping(senderName, senderId);
+  }
+
+  setConnectionStatus(connected: boolean): void {
+    this.isConnected = connected;
+    if (!this.mounted) return;
+    const statusEl = this.container.querySelector<HTMLElement>('#teacher-rt-status');
+    if (statusEl) {
+      statusEl.innerHTML = connected
+        ? `<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span><span>Realtime Aktif</span>`
+        : `<span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span><span>Menyambung…</span>`;
+      statusEl.className = `inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-bold ${
+        connected
+          ? 'bg-emerald-950/70 border-emerald-400/40 text-emerald-300'
+          : 'bg-amber-950/70 border-amber-400/40 text-amber-300'
+      }`;
+    }
+  }
+
+  private generateRandomRoomCode(): string {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let suffix = '';
+    for (let i = 0; i < 4; i++) {
+      suffix += chars[Math.floor(Math.random() * chars.length)];
+    }
+    return `PAI-${suffix}`;
+  }
+
+  private buildShareableJoinUrl(): string {
+    const url = new URL(window.location.href);
+    url.searchParams.set('code', this.roomCode);
+    return url.toString();
+  }
+
   private updateHeaderCounters(): void {
     const participants = this.snapshot?.participants ?? [];
     const onlineCount = participants.filter((p) => p.connected).length;
     const onlineEl = this.container.querySelector<HTMLElement>('#teacher-online-count');
     if (onlineEl) {
       onlineEl.innerHTML = `Peserta Online: <span class="text-emerald-400 tabular-nums font-bold">${onlineCount}</span> / ${participants.length}`;
+    }
+    const codeDisp = this.container.querySelector<HTMLElement>('#teacher-room-code-display');
+    if (codeDisp) {
+      codeDisp.textContent = this.roomCode;
+    }
+    const codeInp = this.container.querySelector<HTMLInputElement>('#inp-room-code-inline');
+    if (codeInp && document.activeElement !== codeInp) {
+      codeInp.value = this.roomCode;
     }
   }
 
@@ -221,30 +326,71 @@ export class TeacherUI {
               GP
             </div>
             <div>
-              <h1 class="font-display font-bold text-lg leading-tight text-amber-300">
-                Dashboard Guru PAI · Nusantara 3D
-              </h1>
+              <div class="flex flex-wrap items-center gap-2">
+                <h1 class="font-display font-bold text-lg leading-tight text-amber-300">
+                  Dashboard Guru PAI · Nusantara 3D
+                </h1>
+                <span id="teacher-rt-status" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-bold ${
+                  this.isConnected
+                    ? 'bg-emerald-950/70 border-emerald-400/40 text-emerald-300'
+                    : 'bg-amber-950/70 border-amber-400/40 text-amber-300'
+                }">
+                  <span class="w-2 h-2 rounded-full ${this.isConnected ? 'bg-emerald-400' : 'bg-amber-400'} animate-pulse"></span>
+                  <span>${this.isConnected ? 'Realtime Aktif' : 'Menyambung…'}</span>
+                </span>
+              </div>
               <p class="text-xs text-slate-300">${this.esc(this.sekolah)} · Kode Admin: gpaibeji</p>
             </div>
           </div>
 
           <div class="flex flex-wrap items-center gap-2">
+            <!-- Enter Code / Kode Ruang Pill -->
+            <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-indigo-950/80 border border-indigo-400/50 text-xs">
+              <span class="text-[10px] font-bold uppercase text-indigo-300">Kode Ruang:</span>
+              <strong id="teacher-room-code-display" class="font-display text-sm tracking-wider text-amber-300 select-all">${this.esc(this.roomCode)}</strong>
+              <button id="btn-copy-room-code" type="button" class="px-1.5 py-0.5 rounded bg-indigo-900 hover:bg-indigo-800 text-[10px] font-bold text-white cursor-pointer" title="Salin Kode Ruang">Salin</button>
+              <button id="btn-toggle-edit-code" type="button" class="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] font-bold text-sky-300 cursor-pointer" title="Ubah Kode Ruang">Ubah</button>
+            </div>
+
             <div id="teacher-online-count" class="px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-600 text-xs font-semibold">
               Peserta Online: <span class="text-emerald-400 tabular-nums font-bold">0</span> / 0
             </div>
             <div class="px-3 py-1.5 rounded-lg bg-slate-800 border border-amber-400/50 text-xs font-semibold">
               Status Misi: <span id="teacher-mission-clock" class="text-amber-300 tabular-nums font-bold">MENUNGGU</span>
             </div>
+            <button id="btn-open-analytics-top" type="button" class="px-3 py-1.5 rounded-xl bg-gradient-to-r from-sky-500 to-emerald-400 hover:brightness-110 text-slate-950 font-bold text-xs cursor-pointer shadow-md transition">
+              Analitik Kelas
+            </button>
             <button id="btn-export-excel-top" class="btn-gold text-xs py-1.5 px-3">
               Unduh Excel (.xlsx)
             </button>
             <button id="btn-toggle-teacher-chat" class="btn-secondary text-xs relative">
-              ${this.chatOpen ? 'Sembunyikan Chat' : 'Buka Chat Kelas'}
+              ${this.chatOpen ? 'Sembunyikan Chat' : 'Buka Live Chat'}
               <span id="teacher-chat-badge" class="hidden ml-1 px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-bold text-[10px]">0</span>
             </button>
-            <button id="btn-copy-link" class="btn-secondary text-xs">Salin Link Kelas</button>
+            <button id="btn-copy-link" class="btn-secondary text-xs">Salin Link</button>
             <button id="btn-teacher-logout" class="btn-secondary text-xs text-rose-300">Keluar</button>
           </div>
+
+          <!-- Collapsible Inline Room Code Editor Bar -->
+          <form id="form-edit-room-code" class="hidden w-full pt-2 mt-1 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="text-slate-300 font-semibold">Ubah Enter Code (Kode Ruang Kelas):</span>
+              <input
+                id="inp-room-code-inline"
+                type="text"
+                maxlength="12"
+                required
+                value="${this.esc(this.roomCode)}"
+                class="input-dark text-xs py-1 px-2.5 w-36 uppercase font-bold tracking-wider"
+                placeholder="Cth: PAI5A"
+              />
+              <button id="btn-random-room-code" type="button" class="btn-secondary text-[11px] py-1 px-2.5">Acak Kode</button>
+              <button type="submit" class="btn-primary text-[11px] py-1 px-3">Simpan Kode Baru</button>
+              <button id="btn-cancel-edit-code" type="button" class="btn-secondary text-[11px] py-1 px-2.5">Batal</button>
+            </div>
+            <span class="text-[11px] text-slate-400">Murid wajib memasukkan kode yang sama agar dapat masuk ke ruang kelas ini.</span>
+          </form>
         </header>
 
         <!-- Navigation Tabs -->
@@ -261,14 +407,66 @@ export class TeacherUI {
       </div>
     `;
 
+    this.container.querySelector('#btn-open-analytics-top')?.addEventListener('click', () => {
+      this.openAnalyticsOverlay();
+    });
+
+    this.container.querySelector('#btn-copy-room-code')?.addEventListener('click', () => {
+      soundFX.playClick();
+      void navigator.clipboard?.writeText(this.roomCode);
+      this.onToast(`Kode Ruang "${this.roomCode}" disalin! Bagikan kepada siswa untuk login.`);
+    });
+
+    const editForm = this.container.querySelector<HTMLFormElement>('#form-edit-room-code');
+    const codeInput = this.container.querySelector<HTMLInputElement>('#inp-room-code-inline');
+
+    this.container.querySelector('#btn-toggle-edit-code')?.addEventListener('click', () => {
+      soundFX.playClick();
+      editForm?.classList.toggle('hidden');
+      if (codeInput && editForm && !editForm.classList.contains('hidden')) {
+        codeInput.value = this.roomCode;
+        codeInput.focus();
+      }
+    });
+
+    this.container.querySelector('#btn-cancel-edit-code')?.addEventListener('click', () => {
+      soundFX.playClick();
+      editForm?.classList.add('hidden');
+    });
+
+    this.container.querySelector('#btn-random-room-code')?.addEventListener('click', () => {
+      soundFX.playClick();
+      if (codeInput) codeInput.value = this.generateRandomRoomCode();
+    });
+
+    editForm?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const raw = (codeInput?.value || '').toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 12);
+      if (raw.length < 3) {
+        soundFX.playWrong();
+        this.onToast('Kode Ruang minimal 3 karakter (huruf/angka).');
+        return;
+      }
+      this.roomCode = raw;
+      this.persistTeacherSession();
+      realtimeClient.setRoomCode(raw);
+      this.updateHeaderCounters();
+      editForm.classList.add('hidden');
+      soundFX.playCorrect();
+      this.onToast(`Kode Ruang diperbarui menjadi "${raw}". Bagikan ke siswa untuk login!`);
+    });
+
     this.container.querySelector('#btn-export-excel-top')?.addEventListener('click', () => {
       void this.downloadExcelReport();
     });
 
     this.container.querySelector('#btn-copy-link')?.addEventListener('click', () => {
       soundFX.playClick();
-      void navigator.clipboard?.writeText(window.location.href);
-      this.onToast('Link ruang kelas berhasil disalin! Semua pemain yang membuka link ini otomatis terpantau.');
+      const link = this.buildShareableJoinUrl();
+      void navigator.clipboard?.writeText(link);
+      this.onToast(
+        `Link kelas dengan Kode Ruang "${this.roomCode}" berhasil disalin! Siswa yang membuka link langsung terisi kodenya.`
+      );
     });
 
     this.container.querySelector('#btn-teacher-logout')?.addEventListener('click', () => {
@@ -288,7 +486,7 @@ export class TeacherUI {
         aside.classList.toggle('flex', this.chatOpen);
       }
       if (btn) {
-        btn.innerHTML = `${this.chatOpen ? 'Sembunyikan Chat' : 'Buka Chat Kelas'} <span id="teacher-chat-badge" class="hidden ml-1 px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-bold text-[10px]">0</span>`;
+        btn.innerHTML = `${this.chatOpen ? 'Sembunyikan Chat' : 'Buka Live Chat'} <span id="teacher-chat-badge" class="hidden ml-1 px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-bold text-[10px]">0</span>`;
       }
       if (this.chatOpen) {
         this.unreadChatCount = 0;
@@ -516,16 +714,33 @@ export class TeacherUI {
                       const act = this.getActivityMeta(p);
                       const isMuted = mutedIds.has(p.id);
                       const needsApproval = isPlaying && p.connected && !p.approvedForMission;
+                      const recentTs = this.recentLoginIds.get(p.id) ?? 0;
+                      const isJustLoggedIn = Date.now() - recentTs < 25_000;
+                      const loginTime = new Date(p.joinedAt).toLocaleTimeString('id-ID', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                      });
                       return `
                     <div class="p-3 rounded-xl bg-slate-900/90 border ${
-                      needsApproval ? 'border-amber-400/70' : 'border-slate-700/80'
+                      needsApproval
+                        ? 'border-amber-400/70'
+                        : isJustLoggedIn
+                          ? 'border-emerald-400/80 shadow-md shadow-emerald-500/10'
+                          : 'border-slate-700/80'
                     } space-y-2">
                       <div class="flex items-center justify-between gap-2">
                         <div class="min-w-0">
                           <div class="flex flex-wrap items-center gap-1.5">
+                            <span class="w-2 h-2 rounded-full shrink-0 ${p.connected ? 'bg-emerald-400' : 'bg-slate-600'}"></span>
                             <span class="font-bold text-sm text-white truncate">${this.esc(p.nama)}</span>
                             <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-sky-300">Kls ${this.esc(p.kelas)}</span>
                             <span class="text-[10px] px-1.5 py-0.5 rounded ${act.cls}">${act.label}</span>
+                            ${
+                              isJustLoggedIn
+                                ? `<span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500 text-slate-950 font-bold animate-pulse">BARU LOGIN</span>`
+                                : ''
+                            }
                             ${
                               isPlaying && p.approvedForMission
                                 ? `<span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 border border-emerald-400/40 text-emerald-300">Disetujui</span>`
@@ -534,7 +749,7 @@ export class TeacherUI {
                                   : ''
                             }
                           </div>
-                          <div class="text-[11px] text-slate-400 truncate mt-0.5">${this.esc(p.sekolah)} · Level: ${p.level.toUpperCase()}</div>
+                          <div class="text-[11px] text-slate-400 truncate mt-0.5">${this.esc(p.sekolah)} · Level: ${p.level.toUpperCase()} · Masuk ${loginTime}</div>
                         </div>
                         <div class="text-right shrink-0">
                           <div class="font-display font-bold text-amber-300 tabular-nums">${p.score} pts</div>
@@ -583,11 +798,14 @@ export class TeacherUI {
             </h2>
             <p class="text-xs text-slate-300 mt-0.5">${this.esc(gameMeta.description)}</p>
           </div>
-          <div class="flex items-center gap-3">
+          <div class="flex flex-wrap items-center gap-2.5">
             <div class="text-right">
               <div class="text-xs text-slate-400">Metrik Khusus Permainan</div>
               <div class="font-display font-bold text-lg text-amber-300">${this.esc(gameMeta.leaderboardMetric)} (${this.esc(gameMeta.leaderboardUnit)})</div>
             </div>
+            <button type="button" class="js-open-analytics px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-emerald-400 hover:brightness-110 text-slate-950 font-bold text-xs cursor-pointer shrink-0">
+              Buka Analitik Kelas
+            </button>
             <button type="button" class="js-export-excel btn-gold text-xs py-2.5 px-3.5 shrink-0">
               Ekspor Excel (.xlsx)
             </button>
@@ -816,9 +1034,14 @@ export class TeacherUI {
               Berisi 4 lembar kerja penilaian lengkap: <strong>Rekap Nilai & Progres</strong>, <strong>Penguasaan per Elemen PAI</strong>, <strong>Analisis Butir Soal AKM</strong>, dan <strong>Refleksi & Testimoni Siswa</strong>.
             </p>
           </div>
-          <button type="button" class="js-export-excel btn-gold inline-flex items-center gap-2 text-sm py-3 px-5">
-            Unduh Laporan Excel (.xlsx)
-          </button>
+          <div class="flex flex-wrap items-center gap-2.5">
+            <button type="button" class="js-open-analytics px-4 py-3 rounded-xl bg-gradient-to-r from-sky-500 to-emerald-400 hover:brightness-110 text-slate-950 font-bold text-sm cursor-pointer">
+              Buka Grafik Analitik Kelas
+            </button>
+            <button type="button" class="js-export-excel btn-gold inline-flex items-center gap-2 text-sm py-3 px-5">
+              Unduh Laporan Excel (.xlsx)
+            </button>
+          </div>
         </div>
 
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -936,6 +1159,12 @@ export class TeacherUI {
   private bindMainEvents(): void {
     const main = this.container.querySelector<HTMLElement>('#teacher-main-content');
     if (!main) return;
+
+    main.querySelectorAll<HTMLButtonElement>('.js-open-analytics').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.openAnalyticsOverlay();
+      });
+    });
 
     main.querySelectorAll<HTMLButtonElement>('.js-export-excel').forEach((btn) => {
       btn.addEventListener('click', () => {

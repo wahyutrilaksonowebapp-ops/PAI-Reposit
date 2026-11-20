@@ -7,6 +7,7 @@ export type PersistedTeacherTab = 'misi' | 'leaderboard' | 'materi' | 'soal' | '
 export interface SavedTeacherSession {
   role: 'teacher';
   code: string;
+  roomCode: string;
   sekolah: string;
   activeTab: PersistedTeacherTab;
   savedAt: number;
@@ -15,6 +16,7 @@ export interface SavedTeacherSession {
 export interface SavedStudentSession {
   role: 'student';
   studentId: string;
+  roomCode: string;
   nama: string;
   kelas: string;
   sekolah: string;

@@ -33,7 +33,11 @@ export class StudentUI {
   private container: HTMLElement;
   private world: PaiWorldScript;
   private quiz = new QuizEngine();
-  private onTeacherLoggedIn: (sekolah: string, snapshot: RoomSnapshot | null) => void;
+  private onTeacherLoggedIn: (
+    sekolah: string,
+    roomCode: string,
+    snapshot: RoomSnapshot | null
+  ) => void;
   private onToggleXR: () => void;
   private onToast: (msg: string) => void;
 
@@ -41,15 +45,18 @@ export class StudentUI {
   private loginTab: 'student' | 'teacher' = 'student';
   private snapshot: RoomSnapshot | null = null;
 
-  // Student identity
+  // Student identity & matching Enter Code
   private studentId: string | null = null;
   private nama = '';
   private kelas = '5';
   private sekolah = '';
+  private roomCode = '';
+  private teacherDraftRoomCode = 'PAI2026';
   private avatar: AvatarConfig = { ...DEFAULT_AVATAR_MUSLIM };
   private isReady = false;
   private lastPos: { x: number; y: number; z: number } = { x: 0, y: 0.08, z: 4.8 };
   private lastRotY = Math.PI;
+  private submittingLogin = false;
 
   // Interactive modals & sidebar states
   private openMaterialElementId: string | null = null;
@@ -57,7 +64,8 @@ export class StudentUI {
   private showReflectionModal = false;
   private reflectionSubmitted = false;
   private showMiniLeaderboard = false;
-  private schoolyardChatOpen = window.innerWidth >= 900;
+  private avatarChatOpen = false;
+  private schoolyardChatOpen = window.innerWidth >= 768;
   private gameSidebarTab: GameSidebarTab = 'quiz';
   private unreadChatCount = 0;
 
@@ -82,7 +90,11 @@ export class StudentUI {
   constructor(
     container: HTMLElement,
     world: PaiWorldScript,
-    onTeacherLoggedIn: (sekolah: string, snapshot: RoomSnapshot | null) => void,
+    onTeacherLoggedIn: (
+      sekolah: string,
+      roomCode: string,
+      snapshot: RoomSnapshot | null
+    ) => void,
     onToggleXR: () => void,
     onToast: (msg: string) => void
   ) {
@@ -92,10 +104,17 @@ export class StudentUI {
     this.onToggleXR = onToggleXR;
     this.onToast = onToast;
 
+    // Auto-read ?code=... from shared link so student Enter Code is prefilled
+    const urlCode = new URLSearchParams(window.location.search).get('code');
+    if (urlCode) {
+      this.roomCode = urlCode.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 12);
+    }
+
     this.chatSidebar = new ChatSidebar({
       role: 'student',
       selfId: null,
       senderName: 'Peserta',
+      senderKelas: this.kelas,
       onToast: this.onToast,
     });
 
@@ -143,6 +162,19 @@ export class StudentUI {
           this.persistStudentSession();
         }
       },
+      onQuickSelectOption: (idx) => {
+        if (
+          this.screen === 'playing' &&
+          !this.awaitingNext &&
+          !this.showBuffModal &&
+          !this.showReflectionModal &&
+          !this.waitingForDiceRoll &&
+          this.quiz.currentQuestion &&
+          idx < this.quiz.currentQuestion.options.length
+        ) {
+          this.handleOptionInteraction(idx);
+        }
+      },
     };
   }
 
@@ -152,6 +184,7 @@ export class StudentUI {
     saveSession({
       role: 'student',
       studentId: this.studentId,
+      roomCode: this.roomCode || this.snapshot?.roomCode || 'PAI2026',
       nama: this.nama,
       kelas: this.kelas,
       sekolah: this.sekolah,
@@ -198,13 +231,29 @@ export class StudentUI {
     this.nama = saved.nama;
     this.kelas = saved.kelas;
     this.sekolah = saved.sekolah;
+    this.roomCode = saved.roomCode || snapshot?.roomCode || 'PAI2026';
     this.avatar = { ...saved.avatar };
     this.isReady = Boolean(saved.isReady);
     if (saved.pos) this.lastPos = { ...saved.pos };
     if (typeof saved.rotY === 'number') this.lastRotY = saved.rotY;
 
     this.world.setPlayerIdentity(this.nama, this.kelas, this.avatar);
-    this.chatSidebar.setOptions({ selfId: this.studentId, senderName: this.nama });
+    this.chatSidebar.setOptions({
+      selfId: this.studentId,
+      senderName: this.nama,
+      senderKelas: this.kelas,
+    });
+
+    const handleRestoreJoinResult = (res: { ok: boolean; error?: string }) => {
+      if (!res.ok) {
+        clearSession();
+        realtimeClient.clearStudentSession();
+        this.screen = 'login';
+        this.world.setViewMode('title');
+        this.render();
+        this.onToast(res.error || 'Kode Ruang kelas telah berubah. Silakan masukkan Kode Ruang baru dari Guru.');
+      }
+    };
 
     const mission = snapshot?.mission;
     const serverSelf = snapshot?.participants.find((p) => p.id === this.studentId);
@@ -268,19 +317,22 @@ export class StudentUI {
         this.world.setQuestionVisuals(this.quiz.currentQuestion, []);
       }
 
-      realtimeClient.joinStudent({
-        id: this.studentId,
-        nama: this.nama,
-        kelas: this.kelas,
-        sekolah: this.sekolah,
-        avatar: this.avatar,
-        activity: 'playing',
-        pos: this.lastPos,
-        rotY: this.lastRotY,
-        isReady: this.isReady,
-        wasApproved: true,
-        resumeMissionStartedAt: mission.startedAt,
-      });
+      void realtimeClient
+        .joinStudent({
+          id: this.studentId,
+          roomCode: this.roomCode,
+          nama: this.nama,
+          kelas: this.kelas,
+          sekolah: this.sekolah,
+          avatar: this.avatar,
+          activity: 'playing',
+          pos: this.lastPos,
+          rotY: this.lastRotY,
+          isReady: this.isReady,
+          wasApproved: true,
+          resumeMissionStartedAt: mission.startedAt,
+        })
+        .then(handleRestoreJoinResult);
 
       this.onToast('Permainan dilanjutkan otomatis! Skor & progres kamu tetap tersimpan.');
     } else if (
@@ -295,48 +347,57 @@ export class StudentUI {
       this.showReflectionModal = true;
       this.reflectionSubmitted = false;
       this.world.setViewMode('minigame', mission.gameId);
-      realtimeClient.joinStudent({
-        id: this.studentId,
-        nama: this.nama,
-        kelas: this.kelas,
-        sekolah: this.sekolah,
-        avatar: this.avatar,
-        activity: 'finished',
-        pos: this.lastPos,
-        rotY: this.lastRotY,
-        isReady: this.isReady,
-      });
+      void realtimeClient
+        .joinStudent({
+          id: this.studentId,
+          roomCode: this.roomCode,
+          nama: this.nama,
+          kelas: this.kelas,
+          sekolah: this.sekolah,
+          avatar: this.avatar,
+          activity: 'finished',
+          pos: this.lastPos,
+          rotY: this.lastRotY,
+          isReady: this.isReady,
+        })
+        .then(handleRestoreJoinResult);
       this.onToast('Sesi dilanjutkan ke form refleksi belajar!');
     } else if (saved.screen === 'avatar') {
       this.screen = 'avatar';
       this.world.setViewMode('avatar_studio');
-      realtimeClient.joinStudent({
-        id: this.studentId,
-        nama: this.nama,
-        kelas: this.kelas,
-        sekolah: this.sekolah,
-        avatar: this.avatar,
-        activity: 'avatar',
-        pos: this.lastPos,
-        rotY: this.lastRotY,
-        isReady: this.isReady,
-      });
+      void realtimeClient
+        .joinStudent({
+          id: this.studentId,
+          roomCode: this.roomCode,
+          nama: this.nama,
+          kelas: this.kelas,
+          sekolah: this.sekolah,
+          avatar: this.avatar,
+          activity: 'avatar',
+          pos: this.lastPos,
+          rotY: this.lastRotY,
+          isReady: this.isReady,
+        })
+        .then(handleRestoreJoinResult);
       this.onToast('Studio Avatar dilanjutkan otomatis.');
     } else {
       this.screen = 'schoolyard';
       this.world.setViewMode('schoolyard');
       this.world.setPlayerPosition(this.lastPos, this.lastRotY);
-      realtimeClient.joinStudent({
-        id: this.studentId,
-        nama: this.nama,
-        kelas: this.kelas,
-        sekolah: this.sekolah,
-        avatar: this.avatar,
-        activity: 'schoolyard',
-        pos: this.lastPos,
-        rotY: this.lastRotY,
-        isReady: this.isReady,
-      });
+      void realtimeClient
+        .joinStudent({
+          id: this.studentId,
+          roomCode: this.roomCode,
+          nama: this.nama,
+          kelas: this.kelas,
+          sekolah: this.sekolah,
+          avatar: this.avatar,
+          activity: 'schoolyard',
+          pos: this.lastPos,
+          rotY: this.lastRotY,
+          isReady: this.isReady,
+        })
+        .then(handleRestoreJoinResult);
       this.onToast('Kembali ke Halaman Sekolah — sesi kamu tetap aktif!');
     }
 
@@ -412,18 +473,35 @@ export class StudentUI {
   handleJoined(id: string, snapshot: RoomSnapshot): void {
     this.studentId = id;
     this.snapshot = snapshot;
-    this.chatSidebar.setOptions({ selfId: id, senderName: this.nama || 'Peserta' });
+    if (snapshot.roomCode) this.roomCode = snapshot.roomCode;
+    this.chatSidebar.setOptions({
+      selfId: id,
+      senderName: this.nama || 'Peserta',
+      senderKelas: this.kelas,
+    });
     this.world.syncPeers(snapshot.participants, this.studentId);
 
     // Sync current screen's activity cleanly
     if (this.screen === 'schoolyard') {
       this.updateSchoolyardLiveRegions(snapshot);
       this.chatSidebar.updateMessages(snapshot);
+    } else if (this.screen === 'avatar' && this.avatarChatOpen) {
+      this.chatSidebar.updateMessages(snapshot);
     }
 
     const self = this.getSelfParticipant(snapshot);
     if (snapshot.mission.status === 'playing' && self?.approvedForMission && this.screen !== 'playing') {
       this.beginMissionGame();
+    }
+  }
+
+  handleJoinError(reason: string): void {
+    soundFX.playWrong();
+    this.onToast(reason);
+    const errEl = this.container.querySelector<HTMLElement>('#student-login-err');
+    if (errEl) {
+      errEl.textContent = reason;
+      errEl.classList.remove('hidden');
     }
   }
 
@@ -478,9 +556,13 @@ export class StudentUI {
     const isFromOther = message.senderId !== this.studentId;
     if (isFromOther) {
       const chatVisible =
+        (this.screen === 'avatar' && this.avatarChatOpen) ||
         (this.screen === 'schoolyard' && this.schoolyardChatOpen) ||
         (this.screen === 'playing' && this.gameSidebarTab === 'chat');
-      if (!chatVisible && (this.screen === 'schoolyard' || this.screen === 'playing')) {
+      if (
+        !chatVisible &&
+        (this.screen === 'avatar' || this.screen === 'schoolyard' || this.screen === 'playing')
+      ) {
         this.unreadChatCount += 1;
         this.updateUnreadBadges();
         if (message.senderRole === 'teacher') {
@@ -488,6 +570,10 @@ export class StudentUI {
         }
       }
     }
+  }
+
+  handleChatTyping(senderName: string, senderId: string): void {
+    this.chatSidebar.showTyping(senderName, senderId);
   }
 
   handleChatRejected(reason: string): void {
@@ -512,22 +598,15 @@ export class StudentUI {
   }
 
   private updateUnreadBadges(): void {
-    const syBadge = this.container.querySelector<HTMLElement>('#sy-chat-badge');
-    if (syBadge) {
+    const ids = ['#av-chat-badge', '#sy-chat-badge', '#game-chat-badge'];
+    for (const sel of ids) {
+      const el = this.container.querySelector<HTMLElement>(sel);
+      if (!el) continue;
       if (this.unreadChatCount > 0) {
-        syBadge.textContent = String(this.unreadChatCount);
-        syBadge.classList.remove('hidden');
+        el.textContent = String(this.unreadChatCount);
+        el.classList.remove('hidden');
       } else {
-        syBadge.classList.add('hidden');
-      }
-    }
-    const gameBadge = this.container.querySelector<HTMLElement>('#game-chat-badge');
-    if (gameBadge) {
-      if (this.unreadChatCount > 0) {
-        gameBadge.textContent = String(this.unreadChatCount);
-        gameBadge.classList.remove('hidden');
-      } else {
-        gameBadge.classList.add('hidden');
+        el.classList.add('hidden');
       }
     }
   }
@@ -860,6 +939,18 @@ export class StudentUI {
               this.loginTab === 'student'
                 ? `<form id="form-student-login" class="space-y-3">
                     <div>
+                      <label class="block text-xs font-bold text-amber-300 mb-1">Enter Code (Kode Ruang dari Guru)</label>
+                      <input
+                        name="roomCode"
+                        required
+                        maxlength="12"
+                        autocomplete="off"
+                        class="input-dark uppercase font-display font-bold tracking-widest text-center text-base border-amber-400/60"
+                        placeholder="Masukkan Kode Ruang (cth: PAI2026)"
+                        value="${this.esc(this.roomCode)}"
+                      />
+                    </div>
+                    <div>
                       <label class="block text-xs font-semibold text-slate-300 mb-1">Nama Peserta</label>
                       <input name="nama" required class="input-dark" placeholder="Contoh: Aisyah Putri" value="${this.esc(this.nama)}" />
                     </div>
@@ -877,11 +968,12 @@ export class StudentUI {
                         <input name="sekolah" required class="input-dark" placeholder="Contoh: SDN 01 Beji" value="${this.esc(this.sekolah)}" />
                       </div>
                     </div>
+                    <div id="student-login-err" class="hidden p-2.5 rounded-xl bg-rose-950/80 border border-rose-500/60 text-xs text-rose-200 font-semibold"></div>
                     <p class="text-[11px] text-slate-400 leading-snug">
-                      Setelah masuk, kehadiranmu langsung terpantau Guru. Permainan dimulai bersama sesuai persetujuan Guru.
+                      Samakan Enter Code dengan Guru. Begitu masuk, kehadiranmu langsung terbaca realtime di Dashboard Guru.
                     </p>
-                    <button type="submit" class="btn-primary w-full py-3 text-base mt-1">
-                      Masuk & Buat Avatar Roblox
+                    <button id="btn-student-submit" type="submit" class="btn-primary w-full py-3 text-base mt-1">
+                      Masuk Ruang & Buat Avatar Roblox
                     </button>
                   </form>`
                 : `<form id="form-teacher-login" class="space-y-3">
@@ -890,11 +982,28 @@ export class StudentUI {
                       <input name="code" required class="input-dark" placeholder="Masukkan kode guru (gpaibeji)" />
                     </div>
                     <div>
+                      <label class="block text-xs font-bold text-amber-300 mb-1">Enter Code (Kode Ruang Kelas untuk Murid)</label>
+                      <div class="flex gap-2">
+                        <input
+                          id="inp-teacher-room-code"
+                          name="roomCode"
+                          required
+                          maxlength="12"
+                          autocomplete="off"
+                          class="input-dark uppercase font-display font-bold tracking-widest text-sm flex-1 border-amber-400/60"
+                          placeholder="Cth: PAI2026"
+                          value="${this.esc(this.snapshot?.roomCode || this.teacherDraftRoomCode)}"
+                        />
+                        <button id="btn-teacher-rand-code" type="button" class="btn-secondary text-xs px-3 shrink-0">Acak</button>
+                      </div>
+                      <p class="text-[10px] text-slate-400 mt-1">Kode ini wajib dimasukkan oleh siswa agar masuk ke sesi yang sama.</p>
+                    </div>
+                    <div>
                       <label class="block text-xs font-semibold text-slate-300 mb-1">Nama Sekolah</label>
                       <input name="sekolah" required class="input-dark" placeholder="Contoh: SDN 01 Beji" value="${this.esc(this.sekolah)}" />
                     </div>
-                    <div id="teacher-login-err" class="text-xs text-rose-400 font-semibold hidden"></div>
-                    <button type="submit" class="btn-gold w-full py-3 text-base mt-2">
+                    <div id="teacher-login-err" class="hidden p-2.5 rounded-xl bg-rose-950/80 border border-rose-500/60 text-xs text-rose-200 font-semibold"></div>
+                    <button id="btn-teacher-submit" type="submit" class="btn-gold w-full py-3 text-base mt-2">
                       Buka Dashboard Guru
                     </button>
                   </form>`
@@ -968,78 +1077,194 @@ export class StudentUI {
     });
 
     const stuForm = this.container.querySelector<HTMLFormElement>('#form-student-login');
-    stuForm?.addEventListener('submit', (e) => {
+    stuForm?.addEventListener('submit', async (e) => {
       e.preventDefault();
+      if (this.submittingLogin) return;
       soundFX.playClick();
       const fd = new FormData(stuForm);
+      const enteredCode = String(fd.get('roomCode') || '')
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9-]/g, '')
+        .slice(0, 12);
       this.nama = String(fd.get('nama') || '').trim();
       this.kelas = String(fd.get('kelas') || '5');
       this.sekolah = String(fd.get('sekolah') || '').trim();
+      const errEl = this.container.querySelector<HTMLElement>('#student-login-err');
+      const submitBtn = this.container.querySelector<HTMLButtonElement>('#btn-student-submit');
+
+      if (!enteredCode || enteredCode.length < 3) {
+        if (errEl) {
+          errEl.textContent = 'Enter Code (Kode Ruang) wajib diisi minimal 3 karakter.';
+          errEl.classList.remove('hidden');
+        }
+        soundFX.playWrong();
+        return;
+      }
       if (!this.nama || !this.sekolah) return;
 
-      this.studentId =
+      this.submittingLogin = true;
+      if (errEl) errEl.classList.add('hidden');
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Memverifikasi Kode Ruang…';
+      }
+
+      const candidateId =
         this.studentId ?? `stu_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-      this.world.setPlayerIdentity(this.nama, this.kelas, this.avatar);
-      this.chatSidebar.setOptions({ senderName: this.nama, selfId: this.studentId });
 
-      // Register immediately with the server so the teacher monitors EVERY player using the link
-      realtimeClient.joinStudent({
-        id: this.studentId,
-        nama: this.nama,
-        kelas: this.kelas,
-        sekolah: this.sekolah,
-        avatar: this.avatar,
-        activity: 'avatar',
-      });
+      try {
+        // Strict server roomCode verification + immediate realtime broadcast to Teacher Dashboard
+        const res = await realtimeClient.joinStudent({
+          id: candidateId,
+          roomCode: enteredCode,
+          nama: this.nama,
+          kelas: this.kelas,
+          sekolah: this.sekolah,
+          avatar: this.avatar,
+          activity: 'avatar',
+        });
 
-      this.screen = 'avatar';
-      this.world.setViewMode('avatar_studio');
-      this.persistStudentSession();
-      this.render();
+        if (!res.ok) {
+          soundFX.playWrong();
+          if (errEl) {
+            errEl.textContent =
+              res.error || 'Kode Ruang tidak cocok! Pastikan sama dengan Kode Ruang Guru.';
+            errEl.classList.remove('hidden');
+          }
+          return;
+        }
+
+        this.studentId = res.id ?? candidateId;
+        this.roomCode = res.snapshot?.roomCode || enteredCode;
+        if (res.snapshot) this.snapshot = res.snapshot;
+        this.world.setPlayerIdentity(this.nama, this.kelas, this.avatar);
+        this.chatSidebar.setOptions({
+          senderName: this.nama,
+          senderKelas: this.kelas,
+          selfId: this.studentId,
+        });
+
+        this.screen = 'avatar';
+        this.world.setViewMode('avatar_studio');
+        this.persistStudentSession();
+        this.render();
+        soundFX.playCorrect();
+        this.onToast(
+          `Berhasil masuk Ruang ${this.roomCode}! Kehadiranmu langsung terbaca Guru.`
+        );
+      } finally {
+        this.submittingLogin = false;
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Masuk Ruang & Buat Avatar Roblox';
+        }
+      }
+    });
+
+    this.container.querySelector('#btn-teacher-rand-code')?.addEventListener('click', () => {
+      soundFX.playClick();
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      let suffix = '';
+      for (let i = 0; i < 4; i++) suffix += chars[Math.floor(Math.random() * chars.length)];
+      this.teacherDraftRoomCode = `PAI-${suffix}`;
+      const inp = this.container.querySelector<HTMLInputElement>('#inp-teacher-room-code');
+      if (inp) inp.value = this.teacherDraftRoomCode;
     });
 
     const tchForm = this.container.querySelector<HTMLFormElement>('#form-teacher-login');
-    tchForm?.addEventListener('submit', (e) => {
+    tchForm?.addEventListener('submit', async (e) => {
       e.preventDefault();
+      if (this.submittingLogin) return;
       soundFX.playClick();
       const fd = new FormData(tchForm);
       const code = String(fd.get('code') || '').trim();
       const sekolah = String(fd.get('sekolah') || '').trim();
+      const roomCode =
+        String(fd.get('roomCode') || '')
+          .trim()
+          .toUpperCase()
+          .replace(/[^A-Z0-9-]/g, '')
+          .slice(0, 12) || 'PAI2026';
       this.sekolah = sekolah;
+      this.teacherDraftRoomCode = roomCode;
 
-      if (code.toLowerCase() !== 'gpaibeji' || sekolah.length < 2) {
-        const err = this.container.querySelector('#teacher-login-err');
+      const err = this.container.querySelector<HTMLElement>('#teacher-login-err');
+      const submitBtn = this.container.querySelector<HTMLButtonElement>('#btn-teacher-submit');
+
+      if (code.toLowerCase() !== 'gpaibeji' || sekolah.length < 2 || roomCode.length < 3) {
         if (err) {
-          err.textContent = 'Kode guru harus "gpaibeji" dan nama sekolah wajib diisi.';
+          err.textContent =
+            'Kode guru harus "gpaibeji", Enter Code minimal 3 karakter, dan nama sekolah wajib diisi.';
           err.classList.remove('hidden');
         }
         soundFX.playWrong();
         return;
       }
 
-      realtimeClient.loginTeacher(code, sekolah);
-      if (!realtimeClient.connected) {
-        this.onTeacherLoggedIn(sekolah, this.snapshot);
+      this.submittingLogin = true;
+      if (err) err.classList.add('hidden');
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Membuka Ruang Guru…';
+      }
+
+      try {
+        const res = await realtimeClient.loginTeacher(code, sekolah, roomCode);
+        if (!res.ok) {
+          soundFX.playWrong();
+          if (err) {
+            err.textContent = res.error || 'Kode guru tidak valid.';
+            err.classList.remove('hidden');
+          }
+          return;
+        }
+        this.onTeacherLoggedIn(
+          res.sekolah || sekolah,
+          res.roomCode || roomCode,
+          res.snapshot ?? this.snapshot
+        );
+      } finally {
+        this.submittingLogin = false;
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Buka Dashboard Guru';
+        }
       }
     });
   }
 
   // =====================================================================
-  // 2. AVATAR CUSTOMIZER STUDIO
+  // 2. AVATAR CUSTOMIZER STUDIO (+ FLOATING LIVE CHAT DRAWER)
   // =====================================================================
   private renderAvatarStudio(): void {
     const a = this.avatar;
     this.container.innerHTML = `
       <div class="fixed inset-0 grid grid-cols-1 md:grid-cols-12 pointer-events-none">
         <!-- Left 3D Turntable Viewport -->
-        <div class="md:col-span-6 lg:col-span-7 flex flex-col justify-between p-4">
-          <div class="pointer-events-auto flex items-center justify-between gap-2">
+        <div class="md:col-span-6 lg:col-span-7 flex flex-col justify-between p-4 relative">
+          <div class="pointer-events-auto flex flex-wrap items-center justify-between gap-2">
             <div class="px-4 py-2 rounded-2xl bg-[#0f172a]/92 border border-sky-400/40">
-              <div class="font-display font-bold text-lg text-amber-300">Studio Avatar Roblox PAI</div>
+              <div class="flex items-center gap-2">
+                <div class="font-display font-bold text-lg text-amber-300">Studio Avatar Roblox PAI</div>
+                <span class="px-2 py-0.5 rounded bg-indigo-950 border border-indigo-400/50 text-[10px] font-bold text-amber-300 tracking-wider">${this.esc(this.roomCode || 'PAI2026')}</span>
+              </div>
               <div class="text-xs text-slate-300">${this.esc(this.nama)} · Kelas ${this.esc(this.kelas)} · ${this.esc(this.sekolah)}</div>
             </div>
-            <button id="btn-back-login" class="btn-secondary text-xs">Kembali</button>
+            <div class="flex items-center gap-1.5">
+              <button id="btn-av-toggle-chat" class="btn-secondary text-xs relative">
+                ${this.avatarChatOpen ? 'Tutup Live Chat' : 'Live Chat'}
+                <span id="av-chat-badge" class="${this.unreadChatCount > 0 && !this.avatarChatOpen ? '' : 'hidden'} ml-1 px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-bold text-[10px]">${this.unreadChatCount}</span>
+              </button>
+              <button id="btn-back-login" class="btn-secondary text-xs text-rose-300">Keluar</button>
+            </div>
           </div>
+
+          ${
+            this.avatarChatOpen
+              ? `<div id="avatar-chat-drawer" class="interactive-layer absolute left-4 top-20 bottom-20 w-80 max-w-[85vw] bg-[#0f172a]/96 border border-emerald-400/45 rounded-2xl overflow-hidden shadow-2xl z-20 flex flex-col"></div>`
+              : ''
+          }
 
           <div class="pointer-events-auto flex flex-wrap items-center justify-center gap-2 mb-2">
             <button id="btn-rot-left" class="btn-secondary text-xs">⟲ Putar Kiri</button>
@@ -1217,12 +1442,32 @@ export class StudentUI {
       </div>
     `;
 
+    const avChatMount = this.container.querySelector<HTMLElement>('#avatar-chat-drawer');
+    if (avChatMount) {
+      this.unreadChatCount = 0;
+      this.chatSidebar.setOptions({
+        role: 'student',
+        selfId: this.studentId,
+        senderName: this.nama || 'Peserta',
+        senderKelas: this.kelas,
+      });
+      this.chatSidebar.mount(avChatMount, this.snapshot);
+    }
+
     this.bindAvatarEvents();
   }
 
   private bindAvatarEvents(): void {
+    this.container.querySelector('#btn-av-toggle-chat')?.addEventListener('click', () => {
+      soundFX.playClick();
+      this.avatarChatOpen = !this.avatarChatOpen;
+      if (this.avatarChatOpen) this.unreadChatCount = 0;
+      this.render();
+    });
+
     this.container.querySelector('#btn-back-login')?.addEventListener('click', () => {
       soundFX.playClick();
+      realtimeClient.leaveStudent(this.studentId);
       clearSession();
       realtimeClient.clearStudentSession();
       this.screen = 'login';
@@ -1285,8 +1530,9 @@ export class StudentUI {
         realtimeClient.updateAvatar(this.studentId, this.avatar, 'schoolyard');
       } else {
         this.studentId = `stu_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-        realtimeClient.joinStudent({
+        void realtimeClient.joinStudent({
           id: this.studentId,
+          roomCode: this.roomCode || this.snapshot?.roomCode || 'PAI2026',
           nama: this.nama,
           kelas: this.kelas,
           sekolah: this.sekolah,
@@ -1320,7 +1566,11 @@ export class StudentUI {
           <div id="sy-topbar" class="flex flex-wrap items-center justify-between gap-2 pointer-events-auto">
             <div class="px-3.5 py-2 rounded-2xl bg-[#0f172a]/92 border border-amber-400/45 flex items-center gap-3">
               <div>
-                <div class="font-display font-bold text-sm md:text-base text-white">${this.esc(this.nama)} <span class="text-xs text-sky-300 font-normal">· Kls ${this.esc(this.kelas)}</span></div>
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <span class="font-display font-bold text-sm md:text-base text-white">${this.esc(this.nama)}</span>
+                  <span class="text-xs text-sky-300 font-normal">· Kls ${this.esc(this.kelas)}</span>
+                  <span class="px-1.5 py-0.5 rounded bg-indigo-950 border border-indigo-400/50 text-[10px] font-bold text-amber-300 tracking-wider">KODE: ${this.esc(this.roomCode || this.snapshot?.roomCode || 'PAI2026')}</span>
+                </div>
                 <div id="sy-online-summary" class="text-[11px] text-slate-300">${this.esc(this.sekolah)} · ${onlinePeers.length} Peserta di Halaman Sekolah</div>
               </div>
             </div>
@@ -1329,7 +1579,7 @@ export class StudentUI {
               <button id="btn-open-materi" class="btn-primary text-xs py-2 px-3">Penguasaan Materi PAI</button>
               <button id="btn-edit-avatar" class="btn-secondary text-xs py-2 px-3">Ubah Avatar</button>
               <button id="btn-toggle-sy-chat" class="btn-secondary text-xs py-2 px-3 relative">
-                ${this.schoolyardChatOpen ? 'Tutup Chat' : 'Chat & Teman'}
+                ${this.schoolyardChatOpen ? 'Tutup Live Chat' : 'Live Chat & Teman'}
                 <span id="sy-chat-badge" class="${this.unreadChatCount > 0 && !this.schoolyardChatOpen ? '' : 'hidden'} ml-1 px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-bold text-[10px]">${this.unreadChatCount}</span>
               </button>
               <button id="btn-sy-mute" class="btn-secondary text-xs py-2 px-2.5">${soundFX.muted ? '🔇' : '🔊'}</button>
@@ -1338,20 +1588,10 @@ export class StudentUI {
             </div>
           </div>
 
-          <!-- Bottom Mission Waiting Dock + Mobile D-Pad -->
+          <!-- Bottom Mission Waiting Dock + 360° Mobile Touch Joystick & Jump -->
           <div id="sy-bottom-dock" class="flex items-end justify-between gap-3">
-            <!-- Compact Touch Move Pad -->
-            <div class="pointer-events-auto grid grid-cols-3 gap-1 w-28 bg-[#0f172a]/85 p-1.5 rounded-2xl border border-slate-700 shrink-0">
-              <div></div>
-              <button data-dir="up" class="js-dpad h-8 rounded-lg bg-slate-800 text-white font-bold text-xs">▲</button>
-              <div></div>
-              <button data-dir="left" class="js-dpad h-8 rounded-lg bg-slate-800 text-white font-bold text-xs">◀</button>
-              <button id="btn-sy-jump" class="h-8 rounded-lg bg-emerald-600 text-white font-bold text-[10px]">LMP</button>
-              <button data-dir="right" class="js-dpad h-8 rounded-lg bg-slate-800 text-white font-bold text-xs">▶</button>
-              <div></div>
-              <button data-dir="down" class="js-dpad h-8 rounded-lg bg-slate-800 text-white font-bold text-xs">▼</button>
-              <div></div>
-            </div>
+            <!-- Smooth 360° Touch Joystick + Jump Button -->
+            ${this.renderTouchControlsHtml(false, false)}
 
             <!-- Teacher-Gated Mission Status Banner (NO Solo Mode) -->
             <div id="sy-mission-banner" class="pointer-events-auto flex-1 max-w-xl bg-[#0f172a]/94 border-2 border-amber-400/50 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
@@ -1393,6 +1633,7 @@ export class StudentUI {
         role: 'student',
         selfId: this.studentId,
         senderName: this.nama || 'Peserta',
+        senderKelas: this.kelas,
       });
       this.chatSidebar.mount(chatMount, this.snapshot);
     }
@@ -1444,7 +1685,7 @@ export class StudentUI {
           ${
             awaitingApproval
               ? 'Guru akan menyetujui masuknya kamu dari Dashboard Admin. Sambil menunggu, baca materi PAI di Kios 3D!'
-              : 'Jalan (WASD/Panah) untuk bertemu teman & klik Kios 3D untuk belajar 5 Materi PAI.'
+              : 'Gerakkan karakter: Joystick Sentuh / Ketuk Tanah (HP) atau WASD·Panah + Spasi Lompat (Keyboard).'
           }
         </div>
       </div>
@@ -1642,6 +1883,7 @@ export class StudentUI {
     });
     this.container.querySelector('#btn-sy-logout')?.addEventListener('click', () => {
       soundFX.playClick();
+      realtimeClient.leaveStudent(this.studentId);
       clearSession();
       realtimeClient.clearStudentSession();
       this.screen = 'login';
@@ -1650,25 +1892,141 @@ export class StudentUI {
     });
 
     this.bindReadyButton();
+    this.bindTouchControls(this.container);
+  }
 
-    // D-pad touch movement
-    this.container.querySelectorAll<HTMLButtonElement>('.js-dpad').forEach((btn) => {
-      const dir = btn.dataset.dir;
-      const start = (e: Event) => {
-        e.preventDefault();
-        if (dir === 'up') this.world.setJoystick(0, -1);
-        else if (dir === 'down') this.world.setJoystick(0, 1);
-        else if (dir === 'left') this.world.setJoystick(-1, 0);
-        else if (dir === 'right') this.world.setJoystick(1, 0);
+  /**
+   * Renders a responsive 360° virtual thumb joystick + tactile Jump button
+   * (plus left/right lane steer buttons in Grand Prix) for mobile touchscreen play.
+   */
+  private renderTouchControlsHtml(compact: boolean, isGrandPrix: boolean): string {
+    const padSize = compact ? 'w-24 h-24' : 'w-28 h-28';
+    const knobSize = compact ? 'w-10 h-10' : 'w-11 h-11';
+    const jumpSize = compact ? 'w-14 h-14 text-[10px]' : 'w-16 h-16 text-xs';
+
+    return `
+      <div class="pointer-events-auto flex items-end gap-2.5 select-none shrink-0" style="touch-action: none;">
+        <!-- 360° Analog Virtual Thumb Joystick -->
+        <div
+          class="js-touch-joy relative ${padSize} rounded-full bg-[#0f172a]/85 border-2 border-sky-400/50 shadow-xl flex items-center justify-center cursor-grab active:cursor-grabbing"
+          style="touch-action: none;"
+          aria-label="Joystick Gerak Karakter"
+        >
+          <span class="absolute top-1.5 text-[9px] text-sky-300/70 pointer-events-none">▲</span>
+          <span class="absolute bottom-1.5 text-[9px] text-sky-300/70 pointer-events-none">▼</span>
+          <span class="absolute left-2 text-[9px] text-sky-300/70 pointer-events-none">◀</span>
+          <span class="absolute right-2 text-[9px] text-sky-300/70 pointer-events-none">▶</span>
+          <div
+            class="js-touch-knob ${knobSize} rounded-full bg-gradient-to-br from-sky-400 to-emerald-400 border-2 border-white/80 shadow-lg pointer-events-none transition-transform duration-75"
+            style="transform: translate3d(0px, 0px, 0px);"
+          ></div>
+        </div>
+
+        <!-- Action Buttons: Jump (+ Grand Prix Lane Steer) -->
+        <div class="flex flex-col items-center gap-1.5">
+          ${
+            isGrandPrix
+              ? `<div class="flex items-center gap-1.5">
+                  <button type="button" class="js-touch-lane-left px-2.5 py-1.5 rounded-xl bg-amber-400/90 active:scale-95 text-slate-950 font-bold text-xs shadow cursor-pointer" style="touch-action: none;">◀ Kiri</button>
+                  <button type="button" class="js-touch-lane-right px-2.5 py-1.5 rounded-xl bg-amber-400/90 active:scale-95 text-slate-950 font-bold text-xs shadow cursor-pointer" style="touch-action: none;">Kanan ▶</button>
+                </div>`
+              : ''
+          }
+          <button
+            type="button"
+            class="js-touch-jump ${jumpSize} rounded-full bg-gradient-to-br from-emerald-500 to-teal-500 active:scale-90 border-2 border-emerald-200/80 text-slate-950 font-display font-bold shadow-xl flex items-center justify-center cursor-pointer"
+            style="touch-action: none;"
+          >
+            LOMPAT
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  private bindTouchControls(scope: HTMLElement): void {
+    scope.querySelectorAll<HTMLElement>('.js-touch-joy').forEach((pad) => {
+      const knob = pad.querySelector<HTMLElement>('.js-touch-knob');
+      let activePointerId: number | null = null;
+
+      const updateFromPointer = (clientX: number, clientY: number) => {
+        const rect = pad.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const maxR = Math.max(24, rect.width * 0.36);
+        let dx = clientX - cx;
+        let dy = clientY - cy;
+        const dist = Math.hypot(dx, dy);
+        if (dist > maxR) {
+          dx = (dx / dist) * maxR;
+          dy = (dy / dist) * maxR;
+        }
+        if (knob) {
+          knob.style.transform = `translate3d(${dx.toFixed(1)}px, ${dy.toFixed(1)}px, 0px)`;
+        }
+        const nx = Math.abs(dx / maxR) < 0.1 ? 0 : dx / maxR;
+        const ny = Math.abs(dy / maxR) < 0.1 ? 0 : dy / maxR;
+        this.world.setJoystick(nx, ny);
       };
-      const stop = () => this.world.setJoystick(0, 0);
-      btn.addEventListener('pointerdown', start);
-      btn.addEventListener('pointerup', stop);
-      btn.addEventListener('pointerleave', stop);
+
+      const release = () => {
+        activePointerId = null;
+        if (knob) knob.style.transform = 'translate3d(0px, 0px, 0px)';
+        this.world.setJoystick(0, 0);
+      };
+
+      pad.addEventListener('pointerdown', (e: PointerEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        activePointerId = e.pointerId;
+        try {
+          pad.setPointerCapture(e.pointerId);
+        } catch {
+          // ignore if synthetic pointer
+        }
+        updateFromPointer(e.clientX, e.clientY);
+      });
+
+      pad.addEventListener('pointermove', (e: PointerEvent) => {
+        if (activePointerId !== e.pointerId) return;
+        e.preventDefault();
+        updateFromPointer(e.clientX, e.clientY);
+      });
+
+      pad.addEventListener('pointerup', (e: PointerEvent) => {
+        if (activePointerId === e.pointerId) release();
+      });
+
+      pad.addEventListener('pointercancel', (e: PointerEvent) => {
+        if (activePointerId === e.pointerId) release();
+      });
     });
-    this.container.querySelector('#btn-sy-jump')?.addEventListener('click', () => {
-      soundFX.playJump();
-      this.world.triggerJump();
+
+    scope.querySelectorAll<HTMLButtonElement>('.js-touch-jump').forEach((btn) => {
+      btn.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        soundFX.playJump();
+        this.world.triggerJump();
+      });
+    });
+
+    scope.querySelectorAll<HTMLButtonElement>('.js-touch-lane-left').forEach((btn) => {
+      btn.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        soundFX.playClick();
+        this.world.steerLane(-1);
+      });
+    });
+
+    scope.querySelectorAll<HTMLButtonElement>('.js-touch-lane-right').forEach((btn) => {
+      btn.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        soundFX.playClick();
+        this.world.steerLane(1);
+      });
     });
   }
 
@@ -1866,8 +2224,15 @@ export class StudentUI {
             ${this.renderMinigameSpecialControls()}
           </div>
 
-          <div class="hidden md:block absolute bottom-3 left-3 px-3 py-1.5 rounded-xl bg-[#0f172a]/85 border border-slate-700 text-[11px] text-slate-300">
-            ${this.esc(gameMeta.controlsHint)}
+          <!-- Touchscreen 360° Joystick + Jump Controls inside Active Minigame -->
+          <div class="absolute bottom-3 right-3 z-10">
+            ${this.renderTouchControlsHtml(true, this.quiz.gameId === 'grand_prix')}
+          </div>
+
+          <!-- Keyboard & Touch Controls Hint -->
+          <div class="hidden md:block absolute bottom-3 left-3 max-w-sm px-3 py-1.5 rounded-xl bg-[#0f172a]/88 border border-slate-700 text-[11px] text-slate-300">
+            <div>${this.esc(gameMeta.controlsHint)}</div>
+            <div class="text-[10px] text-sky-300 mt-0.5">Keyboard: WASD/Panah Gerak · Spasi Lompat · Shift Lari · Tombol 1–4 Pilih Jawaban</div>
           </div>
         </div>
       </div>
@@ -1885,6 +2250,7 @@ export class StudentUI {
         role: 'student',
         selfId: this.studentId,
         senderName: this.nama || 'Peserta',
+        senderKelas: this.kelas,
       });
       this.chatSidebar.mount(gameChatMount, this.snapshot);
     }
@@ -2223,12 +2589,15 @@ export class StudentUI {
     this.container.querySelector('#btn-ref-login')?.addEventListener('click', () => {
       soundFX.playClick();
       this.showReflectionModal = false;
+      realtimeClient.leaveStudent(this.studentId);
       clearSession();
       realtimeClient.clearStudentSession();
       this.screen = 'login';
       this.world.setViewMode('title');
       this.render();
     });
+
+    this.bindTouchControls(this.container);
   }
 
   private hasArabic(text: string): boolean {

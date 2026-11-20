@@ -73,16 +73,23 @@ async function bootstrap(): Promise<void> {
   studentUI = new StudentUI(
     appRoot,
     worldScript,
-    (sekolah, snap) => {
+    (sekolah, roomCode, snap) => {
       activeRole = 'teacher';
       studentUI.unmount();
-      teacherUI.mount(sekolah, snap);
+      teacherUI.mount(sekolah, snap, undefined, 'gpaibeji', roomCode);
+      showToast(`Berhasil masuk sebagai Guru Admin PAI · Kode Ruang: ${roomCode}`);
     },
     toggleXR,
     showToast
   );
 
   // Realtime event routing
+  realtimeClient.on('connectionChange', (connected) => {
+    if (activeRole === 'teacher') {
+      teacherUI.setConnectionStatus(connected);
+    }
+  });
+
   realtimeClient.on('snapshot', (snap) => {
     paiBank.setCustomContent(snap.customElements, snap.customQuestions);
     if (activeRole === 'teacher') {
@@ -98,6 +105,20 @@ async function bootstrap(): Promise<void> {
     }
   });
 
+  realtimeClient.on('joinError', (reason) => {
+    if (activeRole === 'student') {
+      studentUI.handleJoinError(reason);
+    }
+  });
+
+  realtimeClient.on('studentLoggedIn', ({ participant, isNew, snapshot }) => {
+    if (activeRole === 'teacher') {
+      teacherUI.handleStudentLoggedIn(participant, isNew, snapshot);
+    } else {
+      studentUI.handleSnapshot(snapshot);
+    }
+  });
+
   realtimeClient.on('teacherAuth', (res) => {
     if (res.ok && res.sekolah) {
       if (activeRole === 'teacher') {
@@ -106,8 +127,14 @@ async function bootstrap(): Promise<void> {
       }
       activeRole = 'teacher';
       studentUI.unmount();
-      teacherUI.mount(res.sekolah, res.snapshot ?? realtimeClient.snapshot);
-      showToast('Berhasil masuk sebagai Guru Admin PAI.');
+      teacherUI.mount(
+        res.sekolah,
+        res.snapshot ?? realtimeClient.snapshot,
+        undefined,
+        'gpaibeji',
+        res.roomCode
+      );
+      showToast(`Berhasil masuk sebagai Guru Admin PAI · Kode Ruang: ${res.roomCode ?? 'PAI2026'}`);
     } else if (res.error) {
       showToast(res.error);
     }
@@ -149,6 +176,14 @@ async function bootstrap(): Promise<void> {
     }
   });
 
+  realtimeClient.on('chatTyping', ({ senderName, senderId }) => {
+    if (activeRole === 'student') {
+      studentUI.handleChatTyping(senderName, senderId);
+    } else {
+      teacherUI.handleChatTyping(senderName, senderId);
+    }
+  });
+
   realtimeClient.on('chatRejected', (reason) => {
     if (activeRole === 'student') {
       studentUI.handleChatRejected(reason);
@@ -169,9 +204,10 @@ async function bootstrap(): Promise<void> {
 
   if (saved?.role === 'teacher') {
     activeRole = 'teacher';
-    teacherUI.mount(saved.sekolah, initial, saved.activeTab, saved.code);
-    realtimeClient.loginTeacher(saved.code, saved.sekolah);
-    showToast('Dashboard Guru dilanjutkan otomatis.');
+    const restoredRoomCode = saved.roomCode || initial?.roomCode || 'PAI2026';
+    teacherUI.mount(saved.sekolah, initial, saved.activeTab, saved.code, restoredRoomCode);
+    void realtimeClient.loginTeacher(saved.code, saved.sekolah, restoredRoomCode);
+    showToast(`Dashboard Guru dilanjutkan otomatis · Kode Ruang: ${restoredRoomCode}`);
   } else if (saved?.role === 'student') {
     activeRole = 'student';
     studentUI.restoreSession(saved, initial);

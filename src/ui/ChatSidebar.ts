@@ -6,6 +6,7 @@ export interface ChatSidebarOptions {
   role: 'student' | 'teacher';
   selfId?: string | null;
   senderName: string;
+  senderKelas?: string;
   compact?: boolean;
   onToast?: (msg: string) => void;
 }
@@ -32,6 +33,8 @@ export class ChatSidebar {
   private options: ChatSidebarOptions;
   private snapshot: RoomSnapshot | null = null;
   private lastMessageCount = 0;
+  private typingClearTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastTypingEmitAt = 0;
 
   constructor(options: ChatSidebarOptions) {
     this.options = options;
@@ -49,7 +52,26 @@ export class ChatSidebar {
   }
 
   unmount(): void {
+    if (this.typingClearTimer) {
+      clearTimeout(this.typingClearTimer);
+      this.typingClearTimer = null;
+    }
     this.root = null;
+  }
+
+  showTyping(senderName: string, senderId: string): void {
+    if (!this.root) return;
+    if (this.options.role === 'student' && senderId === this.options.selfId) return;
+    if (this.options.role === 'teacher' && senderId === 'teacher_admin') return;
+    const typingEl = this.root.querySelector<HTMLElement>('.js-chat-typing');
+    if (!typingEl) return;
+    typingEl.textContent = `${senderName} sedang mengetik...`;
+    typingEl.classList.remove('hidden');
+    if (this.typingClearTimer) clearTimeout(this.typingClearTimer);
+    this.typingClearTimer = setTimeout(() => {
+      typingEl.classList.add('hidden');
+      typingEl.textContent = '';
+    }, 2600);
   }
 
   updateMessages(snapshot: RoomSnapshot | null, forceScroll = false): void {
@@ -62,6 +84,13 @@ export class ChatSidebar {
     const selfMuted =
       this.options.role === 'student' &&
       (chatMutedAll || (this.options.selfId ? mutedIds.has(this.options.selfId) : false));
+
+    // Update online count in chat header
+    const onlineBadge = this.root.querySelector<HTMLElement>('.js-chat-online-count');
+    if (onlineBadge) {
+      const onlineCount = (snapshot?.participants ?? []).filter((p) => p.connected).length;
+      onlineBadge.textContent = `${onlineCount} Online`;
+    }
 
     // Update mute button (teacher)
     const muteAllBtn = this.root.querySelector<HTMLButtonElement>('.js-chat-mute-all');
@@ -172,13 +201,14 @@ export class ChatSidebar {
         <div class="px-3 py-2.5 border-b border-slate-700/80 flex items-center justify-between gap-2 shrink-0 bg-slate-900/80">
           <div class="min-w-0">
             <div class="flex items-center gap-1.5">
-              <span class="w-2 h-2 rounded-full bg-emerald-400 shrink-0"></span>
+              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
               <span class="font-display font-bold text-xs text-white truncate">
-                ${isTeacher ? 'Chat Moderasi Kelas' : 'Chat Kelas Aman'}
+                ${isTeacher ? 'Live Chat Kelas (Admin)' : 'Live Chat Virtual PAI'}
               </span>
+              <span class="js-chat-online-count text-[10px] px-1.5 py-0.2 rounded bg-emerald-950 border border-emerald-400/40 text-emerald-300 font-bold shrink-0">0 Online</span>
             </div>
             <div class="text-[10px] text-slate-400 truncate">
-              ${isTeacher ? 'Saring kata & kendali kelas' : 'Filter sopan santun aktif'}
+              ${isTeacher ? 'Percakapan virtual & moderasi realtime' : 'Ngobrol sopan dengan Guru & teman'}
             </div>
           </div>
           ${
@@ -193,6 +223,9 @@ export class ChatSidebar {
 
         <!-- Messages List -->
         <div class="js-chat-list flex-1 min-h-0 overflow-y-auto p-2.5 space-y-2"></div>
+
+        <!-- Realtime Typing Indicator -->
+        <div class="js-chat-typing hidden px-3 py-1 text-[11px] italic text-sky-300 bg-slate-900/60 shrink-0"></div>
 
         <!-- Student Mute Notice -->
         <div class="js-chat-mute-notice hidden px-3 py-1.5 bg-rose-950/75 border-t border-rose-500/40 text-[11px] text-rose-200 font-semibold shrink-0"></div>
@@ -324,6 +357,18 @@ export class ChatSidebar {
     const input = this.root.querySelector<HTMLInputElement>('.js-chat-input');
     const pinCheck = this.root.querySelector<HTMLInputElement>('.js-chat-pin-check');
 
+    input?.addEventListener('input', () => {
+      const now = Date.now();
+      if (now - this.lastTypingEmitAt > 1400 && input.value.trim().length > 0) {
+        this.lastTypingEmitAt = now;
+        realtimeClient.sendTyping({
+          role: this.options.role,
+          senderId: this.options.selfId ?? undefined,
+          senderName: this.options.senderName,
+        });
+      }
+    });
+
     form?.addEventListener('submit', (e) => {
       e.preventDefault();
       if (!input) return;
@@ -367,6 +412,7 @@ export class ChatSidebar {
       role: this.options.role,
       senderId: this.options.selfId ?? undefined,
       senderName: this.options.senderName,
+      senderKelas: this.options.senderKelas,
       text,
       pin,
     });
