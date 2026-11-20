@@ -4,6 +4,7 @@ import { realtimeClient } from './services/RealtimeClient.ts';
 import { StudentUI } from './ui/StudentUI.ts';
 import { TeacherUI } from './ui/TeacherUI.ts';
 import { paiBank } from './data/paiBank.ts';
+import { clearSession, loadSession } from './services/SessionStorage.ts';
 
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -62,7 +63,8 @@ async function bootstrap(): Promise<void> {
     appRoot,
     () => {
       activeRole = 'student';
-      teacherUI.unmount();
+      teacherUI.unmount(true);
+      clearSession();
       studentUI.mount(realtimeClient.snapshot);
     },
     showToast
@@ -161,9 +163,23 @@ async function bootstrap(): Promise<void> {
     }
   });
 
-  // Initial state & live WebSocket connection
+  // Initial state, reload session restoration & live WebSocket connection
   const initial = await realtimeClient.fetchInitialState();
-  studentUI.mount(initial);
+  const saved = loadSession();
+
+  if (saved?.role === 'teacher') {
+    activeRole = 'teacher';
+    teacherUI.mount(saved.sekolah, initial, saved.activeTab, saved.code);
+    realtimeClient.loginTeacher(saved.code, saved.sekolah);
+    showToast('Dashboard Guru dilanjutkan otomatis.');
+  } else if (saved?.role === 'student') {
+    activeRole = 'student';
+    studentUI.restoreSession(saved, initial);
+  } else {
+    activeRole = 'student';
+    studentUI.mount(initial);
+  }
+
   realtimeClient.connect();
 }
 

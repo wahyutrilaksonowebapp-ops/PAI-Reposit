@@ -20,6 +20,11 @@ import { QuizEngine } from '../game/QuizEngine.ts';
 import { soundFX } from '../audio/SoundFX.ts';
 import type { PaiWorldScript } from '../scene/PaiWorldScript.ts';
 import { ChatSidebar } from './ChatSidebar.ts';
+import {
+  clearSession,
+  saveSession,
+  type SavedStudentSession,
+} from '../services/SessionStorage.ts';
 
 type StudentScreen = 'login' | 'avatar' | 'schoolyard' | 'playing';
 type GameSidebarTab = 'quiz' | 'chat';
@@ -43,6 +48,8 @@ export class StudentUI {
   private sekolah = '';
   private avatar: AvatarConfig = { ...DEFAULT_AVATAR_MUSLIM };
   private isReady = false;
+  private lastPos: { x: number; y: number; z: number } = { x: 0, y: 0.08, z: 4.8 };
+  private lastRotY = Math.PI;
 
   // Interactive modals & sidebar states
   private openMaterialElementId: string | null = null;
@@ -65,6 +72,12 @@ export class StudentUI {
 
   private tickInterval: ReturnType<typeof setInterval> | null = null;
   private onResizeBound = () => this.syncCameraCentering();
+  private onBeforeUnloadBound = () => this.persistStudentSession();
+  private onVisibilityChangeBound = () => {
+    if (document.visibilityState === 'hidden') {
+      this.persistStudentSession();
+    }
+  };
 
   constructor(
     container: HTMLElement,
@@ -123,11 +136,40 @@ export class StudentUI {
         }
       },
       onPlayerMoveSync: (pos, rotY) => {
+        this.lastPos = pos;
+        this.lastRotY = rotY;
         if (this.studentId) {
           realtimeClient.sendMove(this.studentId, pos, rotY);
+          this.persistStudentSession();
         }
       },
     };
+  }
+
+  private persistStudentSession(): void {
+    if (this.screen === 'login' || !this.studentId || !this.nama || !this.sekolah) return;
+    const self = this.getSelfParticipant();
+    saveSession({
+      role: 'student',
+      studentId: this.studentId,
+      nama: this.nama,
+      kelas: this.kelas,
+      sekolah: this.sekolah,
+      avatar: { ...this.avatar },
+      screen: this.screen,
+      isReady: this.isReady,
+      pos: { ...this.lastPos },
+      rotY: this.lastRotY,
+      missionStartedAt: this.snapshot?.mission.startedAt ?? null,
+      missionGameId: this.quiz.gameId,
+      approvedForMission: Boolean(self?.approvedForMission || this.screen === 'playing'),
+      quizState: this.screen === 'playing' ? this.quiz.exportState() : null,
+      waitingForDiceRoll: this.waitingForDiceRoll,
+      lastDiceNumber: this.lastDiceNumber,
+      showReflectionModal: this.showReflectionModal,
+      reflectionSubmitted: this.reflectionSubmitted,
+      savedAt: Date.now(),
+    });
   }
 
   mount(snapshot: RoomSnapshot | null): void {
@@ -141,6 +183,173 @@ export class StudentUI {
     this.render();
     this.startTimerLoop();
     window.addEventListener('resize', this.onResizeBound);
+    window.addEventListener('beforeunload', this.onBeforeUnloadBound);
+    document.addEventListener('visibilitychange', this.onVisibilityChangeBound);
+  }
+
+  restoreSession(saved: SavedStudentSession, snapshot: RoomSnapshot | null): void {
+    this.snapshot = snapshot;
+    if (snapshot) {
+      paiBank.setCustomContent(snapshot.customElements, snapshot.customQuestions);
+    }
+    this.world.setElements(paiBank.getAllElements());
+
+    this.studentId = saved.studentId;
+    this.nama = saved.nama;
+    this.kelas = saved.kelas;
+    this.sekolah = saved.sekolah;
+    this.avatar = { ...saved.avatar };
+    this.isReady = Boolean(saved.isReady);
+    if (saved.pos) this.lastPos = { ...saved.pos };
+    if (typeof saved.rotY === 'number') this.lastRotY = saved.rotY;
+
+    this.world.setPlayerIdentity(this.nama, this.kelas, this.avatar);
+    this.chatSidebar.setOptions({ selfId: this.studentId, senderName: this.nama });
+
+    const mission = snapshot?.mission;
+    const serverSelf = snapshot?.participants.find((p) => p.id === this.studentId);
+    const canResumePlaying =
+      mission?.status === 'playing' &&
+      Boolean(
+        serverSelf?.approvedForMission ||
+          (saved.approvedForMission &&
+            saved.missionStartedAt != null &&
+            saved.missionStartedAt === mission.startedAt)
+      );
+
+    if (canResumePlaying && mission) {
+      this.screen = 'playing';
+      this.showBuffModal = false;
+      this.showReflectionModal = false;
+      this.reflectionSubmitted = false;
+      this.awaitingNext = false;
+      this.selectedIndices = [];
+      this.lastFeedback = null;
+
+      if (saved.quizState && saved.quizState.gameId === mission.gameId) {
+        this.quiz.restoreState(saved.quizState);
+      } else {
+        this.quiz.reset({
+          gameId: mission.gameId,
+          elementIds:
+            mission.elementIds.length > 0
+              ? mission.elementIds
+              : paiBank.getAllElements().map((e) => e.id),
+          questionDurationSec: mission.questionDurationSec,
+        });
+        if (serverSelf) {
+          this.quiz.score = serverSelf.score;
+          this.quiz.level = serverSelf.level;
+          this.quiz.streak = serverSelf.streak;
+          this.quiz.maxStreak = serverSelf.maxStreak;
+          this.quiz.correctCount = serverSelf.correctCount;
+          this.quiz.wrongCount = serverSelf.wrongCount;
+          this.quiz.progressValue = serverSelf.progressValue;
+          this.quiz.activeBuff = serverSelf.activeBuff;
+        }
+      }
+
+      this.world.setViewMode('minigame', mission.gameId);
+      this.world.setCurrentProgress(this.quiz.progressValue);
+      if (mission.gameId === 'portal_dimension') {
+        this.world.setActivePortal(this.quiz.portalDimensionLevel);
+      }
+
+      this.waitingForDiceRoll =
+        mission.gameId === 'board_adventure' && Boolean(saved.waitingForDiceRoll);
+      this.lastDiceNumber = saved.lastDiceNumber ?? 0;
+
+      if (this.waitingForDiceRoll) {
+        this.quiz.currentQuestion = null;
+        this.world.setQuestionVisuals(null, []);
+      } else if (!this.quiz.currentQuestion) {
+        this.loadNextQuestion();
+      } else {
+        this.world.setQuestionVisuals(this.quiz.currentQuestion, []);
+      }
+
+      realtimeClient.joinStudent({
+        id: this.studentId,
+        nama: this.nama,
+        kelas: this.kelas,
+        sekolah: this.sekolah,
+        avatar: this.avatar,
+        activity: 'playing',
+        pos: this.lastPos,
+        rotY: this.lastRotY,
+        isReady: this.isReady,
+        wasApproved: true,
+        resumeMissionStartedAt: mission.startedAt,
+      });
+
+      this.onToast('Permainan dilanjutkan otomatis! Skor & progres kamu tetap tersimpan.');
+    } else if (
+      mission?.status === 'finished' &&
+      saved.screen === 'playing' &&
+      !saved.reflectionSubmitted
+    ) {
+      if (saved.quizState) {
+        this.quiz.restoreState(saved.quizState);
+      }
+      this.screen = 'playing';
+      this.showReflectionModal = true;
+      this.reflectionSubmitted = false;
+      this.world.setViewMode('minigame', mission.gameId);
+      realtimeClient.joinStudent({
+        id: this.studentId,
+        nama: this.nama,
+        kelas: this.kelas,
+        sekolah: this.sekolah,
+        avatar: this.avatar,
+        activity: 'finished',
+        pos: this.lastPos,
+        rotY: this.lastRotY,
+        isReady: this.isReady,
+      });
+      this.onToast('Sesi dilanjutkan ke form refleksi belajar!');
+    } else if (saved.screen === 'avatar') {
+      this.screen = 'avatar';
+      this.world.setViewMode('avatar_studio');
+      realtimeClient.joinStudent({
+        id: this.studentId,
+        nama: this.nama,
+        kelas: this.kelas,
+        sekolah: this.sekolah,
+        avatar: this.avatar,
+        activity: 'avatar',
+        pos: this.lastPos,
+        rotY: this.lastRotY,
+        isReady: this.isReady,
+      });
+      this.onToast('Studio Avatar dilanjutkan otomatis.');
+    } else {
+      this.screen = 'schoolyard';
+      this.world.setViewMode('schoolyard');
+      this.world.setPlayerPosition(this.lastPos, this.lastRotY);
+      realtimeClient.joinStudent({
+        id: this.studentId,
+        nama: this.nama,
+        kelas: this.kelas,
+        sekolah: this.sekolah,
+        avatar: this.avatar,
+        activity: 'schoolyard',
+        pos: this.lastPos,
+        rotY: this.lastRotY,
+        isReady: this.isReady,
+      });
+      this.onToast('Kembali ke Halaman Sekolah — sesi kamu tetap aktif!');
+    }
+
+    if (snapshot) {
+      this.world.syncPeers(snapshot.participants, this.studentId);
+    }
+
+    this.render();
+    this.persistStudentSession();
+    this.startTimerLoop();
+    window.addEventListener('resize', this.onResizeBound);
+    window.addEventListener('beforeunload', this.onBeforeUnloadBound);
+    document.addEventListener('visibilitychange', this.onVisibilityChangeBound);
   }
 
   unmount(): void {
@@ -149,6 +358,8 @@ export class StudentUI {
       this.tickInterval = null;
     }
     window.removeEventListener('resize', this.onResizeBound);
+    window.removeEventListener('beforeunload', this.onBeforeUnloadBound);
+    document.removeEventListener('visibilitychange', this.onVisibilityChangeBound);
     this.chatSidebar.unmount();
     this.world.setViewportMargins({ left: 0, right: 0, top: 0, bottom: 0 });
     this.container.innerHTML = '';
@@ -175,6 +386,7 @@ export class StudentUI {
       this.screen = 'schoolyard';
       this.world.setViewMode('schoolyard');
       this.world.syncPeers(snapshot.participants, this.studentId);
+      this.persistStudentSession();
       this.onToast('Guru mengembalikan ruang kelas ke Halaman Sekolah.');
       this.render();
       return;
@@ -247,6 +459,7 @@ export class StudentUI {
       this.showBuffModal = false;
       this.showReflectionModal = true;
       this.reflectionSubmitted = false;
+      this.persistStudentSession();
       this.render();
     } else if (this.screen === 'schoolyard') {
       this.updateSchoolyardLiveRegions(snapshot);
@@ -389,6 +602,7 @@ export class StudentUI {
     }
 
     soundFX.playLevelUp();
+    this.persistStudentSession();
     this.render();
   }
 
@@ -398,6 +612,7 @@ export class StudentUI {
     this.awaitingNext = false;
     this.lastFeedback = null;
     this.world.setQuestionVisuals(q, []);
+    this.persistStudentSession();
   }
 
   private handleRollDice(): void {
@@ -495,6 +710,7 @@ export class StudentUI {
       });
     }
 
+    this.persistStudentSession();
     this.render();
 
     setTimeout(() => {
@@ -761,12 +977,14 @@ export class StudentUI {
       this.sekolah = String(fd.get('sekolah') || '').trim();
       if (!this.nama || !this.sekolah) return;
 
+      this.studentId =
+        this.studentId ?? `stu_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
       this.world.setPlayerIdentity(this.nama, this.kelas, this.avatar);
       this.chatSidebar.setOptions({ senderName: this.nama, selfId: this.studentId });
 
       // Register immediately with the server so the teacher monitors EVERY player using the link
       realtimeClient.joinStudent({
-        id: this.studentId ?? undefined,
+        id: this.studentId,
         nama: this.nama,
         kelas: this.kelas,
         sekolah: this.sekolah,
@@ -776,6 +994,7 @@ export class StudentUI {
 
       this.screen = 'avatar';
       this.world.setViewMode('avatar_studio');
+      this.persistStudentSession();
       this.render();
     });
 
@@ -1004,6 +1223,8 @@ export class StudentUI {
   private bindAvatarEvents(): void {
     this.container.querySelector('#btn-back-login')?.addEventListener('click', () => {
       soundFX.playClick();
+      clearSession();
+      realtimeClient.clearStudentSession();
       this.screen = 'login';
       this.world.setViewMode('title');
       this.render();
@@ -1018,12 +1239,14 @@ export class StudentUI {
       soundFX.playClick();
       this.avatar = { ...DEFAULT_AVATAR_MUSLIM };
       this.world.updateAvatarPreview(this.avatar);
+      this.persistStudentSession();
       this.render();
     });
     this.container.querySelector('#btn-preset-muslimah')?.addEventListener('click', () => {
       soundFX.playClick();
       this.avatar = { ...DEFAULT_AVATAR_MUSLIMAH };
       this.world.updateAvatarPreview(this.avatar);
+      this.persistStudentSession();
       this.render();
     });
 
@@ -1035,6 +1258,7 @@ export class StudentUI {
         (this.avatar as unknown as Record<string, string>)[key] = val;
         this.avatar.preset = 'custom';
         this.world.updateAvatarPreview(this.avatar);
+        this.persistStudentSession();
         this.render();
       });
     });
@@ -1045,6 +1269,7 @@ export class StudentUI {
         soundFX.playClick();
         (this.avatar as unknown as Record<string, string>)[key] = sel.value;
         this.world.updateAvatarPreview(this.avatar);
+        this.persistStudentSession();
       });
     };
     bindSelect('#sel-eye', 'eyeStyle');
@@ -1059,7 +1284,9 @@ export class StudentUI {
       if (this.studentId) {
         realtimeClient.updateAvatar(this.studentId, this.avatar, 'schoolyard');
       } else {
+        this.studentId = `stu_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
         realtimeClient.joinStudent({
+          id: this.studentId,
           nama: this.nama,
           kelas: this.kelas,
           sekolah: this.sekolah,
@@ -1072,6 +1299,7 @@ export class StudentUI {
       if (this.snapshot) {
         this.world.syncPeers(this.snapshot.participants, this.studentId);
       }
+      this.persistStudentSession();
       this.render();
       this.onToast('Selamat datang di Halaman Sekolah! Berkumpul bersama teman & tunggu persetujuan Guru untuk memulai misi.');
     });
@@ -1260,6 +1488,7 @@ export class StudentUI {
       if (this.studentId) {
         realtimeClient.setReady(this.studentId, this.isReady);
       }
+      this.persistStudentSession();
       this.onToast(
         this.isReady
           ? 'Status Siap dikirim ke Guru! Tunggu aba-aba mulai dari Guru.'
@@ -1400,6 +1629,7 @@ export class StudentUI {
       }
       this.screen = 'avatar';
       this.world.setViewMode('avatar_studio');
+      this.persistStudentSession();
       this.render();
     });
     this.container.querySelector('#btn-sy-mute')?.addEventListener('click', () => {
@@ -1412,6 +1642,7 @@ export class StudentUI {
     });
     this.container.querySelector('#btn-sy-logout')?.addEventListener('click', () => {
       soundFX.playClick();
+      clearSession();
       realtimeClient.clearStudentSession();
       this.screen = 'login';
       this.world.setViewMode('title');
@@ -1971,6 +2202,7 @@ export class StudentUI {
       });
       soundFX.playCorrect();
       this.reflectionSubmitted = true;
+      this.persistStudentSession();
       this.render();
     });
 
@@ -1985,11 +2217,13 @@ export class StudentUI {
       if (this.snapshot) {
         this.world.syncPeers(this.snapshot.participants, this.studentId);
       }
+      this.persistStudentSession();
       this.render();
     });
     this.container.querySelector('#btn-ref-login')?.addEventListener('click', () => {
       soundFX.playClick();
       this.showReflectionModal = false;
+      clearSession();
       realtimeClient.clearStudentSession();
       this.screen = 'login';
       this.world.setViewMode('title');

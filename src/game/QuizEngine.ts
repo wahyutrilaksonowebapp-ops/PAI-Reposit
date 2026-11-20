@@ -20,6 +20,31 @@ export interface EvaluationResult {
   answerEntry: AnswerLogEntry;
 }
 
+export interface SerializedQuizState {
+  score: number;
+  level: DifficultyLevel;
+  streak: number;
+  maxStreak: number;
+  levelCorrectStreak: number;
+  wrongStreak: number;
+  correctCount: number;
+  wrongCount: number;
+  activeBuff: BuffType;
+  progressValue: number;
+  progressLabel: string;
+  questionDurationSec: number;
+  questionElapsedSec: number;
+  elementIds: string[];
+  gameId: GameId;
+  askedIds: string[];
+  currentQuestionId: string | null;
+  summitPacketIndex: number;
+  summitBasecamp: number;
+  summitPacketPassed: number;
+  portalDimensionLevel: DifficultyLevel;
+  portalStars: Record<DifficultyLevel, number>;
+}
+
 export class QuizEngine {
   public score = 0;
   public level: DifficultyLevel = 'sedang';
@@ -340,5 +365,76 @@ export class QuizEngine {
       step: this.summitPacketPassed,
       nextType: order[this.summitPacketIndex % 3],
     };
+  }
+
+  exportState(): SerializedQuizState {
+    const elapsedSec = this.currentQuestion
+      ? Math.max(0, (performance.now() - this.questionStartedAt) / 1000)
+      : 0;
+    return {
+      score: this.score,
+      level: this.level,
+      streak: this.streak,
+      maxStreak: this.maxStreak,
+      levelCorrectStreak: this.levelCorrectStreak,
+      wrongStreak: this.wrongStreak,
+      correctCount: this.correctCount,
+      wrongCount: this.wrongCount,
+      activeBuff: this.activeBuff,
+      progressValue: this.progressValue,
+      progressLabel: this.progressLabel,
+      questionDurationSec: this.questionDurationSec,
+      questionElapsedSec: Number(elapsedSec.toFixed(2)),
+      elementIds: [...this.elementIds],
+      gameId: this.gameId,
+      askedIds: Array.from(this.askedIds),
+      currentQuestionId: this.currentQuestion?.id ?? null,
+      summitPacketIndex: this.summitPacketIndex,
+      summitBasecamp: this.summitBasecamp,
+      summitPacketPassed: this.summitPacketPassed,
+      portalDimensionLevel: this.portalDimensionLevel,
+      portalStars: { ...this.portalStars },
+    };
+  }
+
+  restoreState(saved: SerializedQuizState): QuestionItem | null {
+    this.score = Math.max(0, saved.score || 0);
+    this.level = saved.level || 'sedang';
+    this.streak = saved.streak || 0;
+    this.maxStreak = saved.maxStreak || 0;
+    this.levelCorrectStreak = saved.levelCorrectStreak || 0;
+    this.wrongStreak = saved.wrongStreak || 0;
+    this.correctCount = saved.correctCount || 0;
+    this.wrongCount = saved.wrongCount || 0;
+    this.activeBuff = saved.activeBuff || 'none';
+    this.progressValue = saved.progressValue || 0;
+    this.progressLabel = saved.progressLabel || this.getMetricLabel(saved.gameId);
+    this.questionDurationSec = Math.max(10, saved.questionDurationSec || 25);
+    this.elementIds = saved.elementIds?.length ? [...saved.elementIds] : ['quran_hadis'];
+    this.gameId = saved.gameId || 'puncak_nalar';
+    this.askedIds = new Set(saved.askedIds || []);
+    this.summitPacketIndex = saved.summitPacketIndex || 0;
+    this.summitBasecamp = saved.summitBasecamp || 0;
+    this.summitPacketPassed = saved.summitPacketPassed || 0;
+    this.portalDimensionLevel = saved.portalDimensionLevel || 'mudah';
+    this.portalStars = saved.portalStars
+      ? { ...saved.portalStars }
+      : { mudah: 0, sedang: 0, sulit: 0 };
+
+    if (saved.currentQuestionId) {
+      const found = paiBank.getAllQuestions().find((q) => q.id === saved.currentQuestionId) ?? null;
+      this.currentQuestion = found;
+      if (found) {
+        // Give the student at least 6 seconds remaining after a page refresh so reload never causes an unfair timeout
+        const cappedElapsed = Math.max(
+          0,
+          Math.min(this.questionDurationSec - 6, saved.questionElapsedSec || 0)
+        );
+        this.questionStartedAt = performance.now() - cappedElapsed * 1000;
+        return found;
+      }
+    }
+    this.currentQuestion = null;
+    return null;
   }
 }

@@ -236,6 +236,20 @@ export class PaiWorldScript extends xb.Script {
     this.playerAvatar?.applyConfig(this.playerConfig);
   }
 
+  setPlayerPosition(pos: { x: number; y: number; z: number }, rotY?: number): void {
+    this.playerPos.set(pos.x, pos.y || 0.08, pos.z);
+    if (this.playerAvatar) {
+      this.playerAvatar.group.position.copy(this.playerPos);
+      if (typeof rotY === 'number' && Number.isFinite(rotY)) {
+        this.playerAvatar.group.rotation.y = rotY;
+      }
+    }
+  }
+
+  setCurrentProgress(progress: number): void {
+    this.currentProgress = Math.max(0, progress);
+  }
+
   rotateStudioAvatar(deltaRad: number): void {
     this.studioTurnAngle += deltaRad;
   }

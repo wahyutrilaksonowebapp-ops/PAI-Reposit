@@ -13,16 +13,19 @@ import { paiBank } from '../data/paiBank.ts';
 import { realtimeClient } from '../services/RealtimeClient.ts';
 import { soundFX } from '../audio/SoundFX.ts';
 import { ChatSidebar } from './ChatSidebar.ts';
+import { clearSession, saveSession } from '../services/SessionStorage.ts';
 
-type TeacherTab = 'misi' | 'leaderboard' | 'materi' | 'soal' | 'laporan';
+export type TeacherTab = 'misi' | 'leaderboard' | 'materi' | 'soal' | 'laporan';
 
 export class TeacherUI {
   private container: HTMLElement;
   private sekolah = '';
+  private adminCode = 'gpaibeji';
   private activeTab: TeacherTab = 'misi';
   private snapshot: RoomSnapshot | null = null;
   private onLogout: () => void;
   private onToast: (msg: string) => void;
+  private exportingExcel = false;
 
   // Local mission draft synced with server
   private selectedElements = new Set<string>(['quran_hadis', 'akidah', 'akhlak', 'fiqih', 'spi']);
@@ -54,9 +57,12 @@ export class TeacherUI {
     });
   }
 
-  mount(sekolah: string, snapshot: RoomSnapshot | null): void {
+  mount(sekolah: string, snapshot: RoomSnapshot | null, initialTab?: TeacherTab, code = 'gpaibeji'): void {
     this.sekolah = sekolah;
+    this.adminCode = code;
+    if (initialTab) this.activeTab = initialTab;
     this.mounted = true;
+    this.persistTeacherSession();
     this.chatSidebar.setOptions({ senderName: `Guru PAI · ${sekolah}` });
     if (snapshot) {
       this.syncStateFromSnapshot(snapshot);
@@ -72,14 +78,55 @@ export class TeacherUI {
     this.timerInterval = setInterval(() => this.updateClockDisplay(), 500);
   }
 
-  unmount(): void {
+  private persistTeacherSession(): void {
+    saveSession({
+      role: 'teacher',
+      code: this.adminCode,
+      sekolah: this.sekolah,
+      activeTab: this.activeTab,
+      savedAt: Date.now(),
+    });
+  }
+
+  async downloadExcelReport(): Promise<void> {
+    if (this.exportingExcel) return;
+    this.exportingExcel = true;
+    soundFX.playClick();
+    this.onToast('Menyiapkan file Excel (.xlsx) nilai & progres peserta...');
+    try {
+      const res = await fetch('/api/export-excel', { cache: 'no-store' });
+      if (!res.ok) throw new Error('Gagal mengunduh laporan Excel.');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const dateStr = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `Laporan_Penilaian_PAI_${dateStr}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      soundFX.playCorrect();
+      this.onToast('Laporan Penilaian Excel (.xlsx) berhasil diunduh!');
+    } catch {
+      soundFX.playWrong();
+      this.onToast('Gagal mengekspor Excel. Pastikan server berjalan dan coba lagi.');
+    } finally {
+      this.exportingExcel = false;
+    }
+  }
+
+  unmount(clearSaved = false): void {
     this.mounted = false;
     if (this.timerInterval) {
       clearInterval(this.timerInterval);
       this.timerInterval = null;
     }
     this.chatSidebar.unmount();
-    realtimeClient.clearTeacherSession();
+    if (clearSaved) {
+      realtimeClient.clearTeacherSession();
+      clearSession();
+    }
     this.container.innerHTML = '';
   }
 
@@ -188,6 +235,9 @@ export class TeacherUI {
             <div class="px-3 py-1.5 rounded-lg bg-slate-800 border border-amber-400/50 text-xs font-semibold">
               Status Misi: <span id="teacher-mission-clock" class="text-amber-300 tabular-nums font-bold">MENUNGGU</span>
             </div>
+            <button id="btn-export-excel-top" class="btn-gold text-xs py-1.5 px-3">
+              Unduh Excel (.xlsx)
+            </button>
             <button id="btn-toggle-teacher-chat" class="btn-secondary text-xs relative">
               ${this.chatOpen ? 'Sembunyikan Chat' : 'Buka Chat Kelas'}
               <span id="teacher-chat-badge" class="hidden ml-1 px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-bold text-[10px]">0</span>
@@ -211,6 +261,10 @@ export class TeacherUI {
       </div>
     `;
 
+    this.container.querySelector('#btn-export-excel-top')?.addEventListener('click', () => {
+      void this.downloadExcelReport();
+    });
+
     this.container.querySelector('#btn-copy-link')?.addEventListener('click', () => {
       soundFX.playClick();
       void navigator.clipboard?.writeText(window.location.href);
@@ -219,6 +273,8 @@ export class TeacherUI {
 
     this.container.querySelector('#btn-teacher-logout')?.addEventListener('click', () => {
       soundFX.playClick();
+      clearSession();
+      realtimeClient.clearTeacherSession();
       this.onLogout();
     });
 
@@ -266,6 +322,7 @@ export class TeacherUI {
       btn.addEventListener('click', () => {
         soundFX.playClick();
         this.activeTab = btn.dataset.tab as TeacherTab;
+        this.persistTeacherSession();
         this.renderNav();
         this.renderMainContent();
       });
@@ -526,9 +583,14 @@ export class TeacherUI {
             </h2>
             <p class="text-xs text-slate-300 mt-0.5">${this.esc(gameMeta.description)}</p>
           </div>
-          <div class="text-right">
-            <div class="text-xs text-slate-400">Metrik Khusus Permainan</div>
-            <div class="font-display font-bold text-lg text-amber-300">${this.esc(gameMeta.leaderboardMetric)} (${this.esc(gameMeta.leaderboardUnit)})</div>
+          <div class="flex items-center gap-3">
+            <div class="text-right">
+              <div class="text-xs text-slate-400">Metrik Khusus Permainan</div>
+              <div class="font-display font-bold text-lg text-amber-300">${this.esc(gameMeta.leaderboardMetric)} (${this.esc(gameMeta.leaderboardUnit)})</div>
+            </div>
+            <button type="button" class="js-export-excel btn-gold text-xs py-2.5 px-3.5 shrink-0">
+              Ekspor Excel (.xlsx)
+            </button>
           </div>
         </div>
 
@@ -748,15 +810,15 @@ export class TeacherUI {
         <div class="bg-[#111c33] border border-amber-400/40 rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4">
           <div>
             <h2 class="font-display font-bold text-xl text-amber-300">
-              Ekspor Laporan Analisis Excel (.xlsx)
+              Ekspor Laporan Penilaian & Progres Siswa (.xlsx)
             </h2>
             <p class="text-xs text-slate-300 mt-1">
-              Berisi 3 lembar kerja lengkap: <strong>Rekap Peserta</strong>, <strong>Analisis Butir Soal AKM</strong>, dan <strong>Refleksi & Testimoni Siswa</strong>.
+              Berisi 4 lembar kerja penilaian lengkap: <strong>Rekap Nilai & Progres</strong>, <strong>Penguasaan per Elemen PAI</strong>, <strong>Analisis Butir Soal AKM</strong>, dan <strong>Refleksi & Testimoni Siswa</strong>.
             </p>
           </div>
-          <a href="/api/export-excel" download class="btn-gold no-underline inline-flex items-center gap-2 text-sm">
+          <button type="button" class="js-export-excel btn-gold inline-flex items-center gap-2 text-sm py-3 px-5">
             Unduh Laporan Excel (.xlsx)
-          </a>
+          </button>
         </div>
 
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -776,6 +838,67 @@ export class TeacherUI {
             <div class="text-xs text-slate-400">Refleksi Tersimpan</div>
             <div class="font-display font-bold text-2xl text-amber-300 tabular-nums">${testimonials.length}</div>
           </div>
+        </div>
+
+        <!-- Live Preview Table of Scores & Progress Included in Excel Export -->
+        <div class="bg-[#111c33] border border-slate-700 rounded-2xl p-5">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <h3 class="font-display font-bold text-base text-emerald-300">
+              Pratinjau Data Penilaian Peserta (Siap Ekspor Excel)
+            </h3>
+            <span class="text-xs text-slate-400">${participants.length} peserta terekam</span>
+          </div>
+          ${
+            participants.length === 0
+              ? `<p class="text-sm text-slate-400 py-6 text-center">Belum ada peserta yang terekam pada sesi ini.</p>`
+              : `<div class="overflow-x-auto">
+                  <table class="w-full text-xs text-left border-collapse">
+                    <thead>
+                      <tr class="bg-slate-900 text-amber-300 border-b border-slate-700">
+                        <th class="p-2.5">#</th>
+                        <th class="p-2.5">Nama Peserta</th>
+                        <th class="p-2.5">Kelas</th>
+                        <th class="p-2.5">Skor</th>
+                        <th class="p-2.5">Benar / Salah</th>
+                        <th class="p-2.5">Akurasi</th>
+                        <th class="p-2.5">Predikat</th>
+                        <th class="p-2.5">Level</th>
+                        <th class="p-2.5">Progres</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${participants
+                        .map((p) => {
+                          const total = p.correctCount + p.wrongCount;
+                          const acc = total > 0 ? Math.round((p.correctCount / total) * 100) : 0;
+                          const pred =
+                            total === 0
+                              ? 'Belum Mulai'
+                              : acc >= 85
+                                ? 'Sangat Baik (A)'
+                                : acc >= 70
+                                  ? 'Baik (B)'
+                                  : acc >= 55
+                                    ? 'Cukup (C)'
+                                    : 'Perlu Bimbingan';
+                          return `
+                            <tr class="border-b border-slate-800 hover:bg-slate-900/60">
+                              <td class="p-2.5 font-bold text-amber-300 tabular-nums">#${p.rank}</td>
+                              <td class="p-2.5 font-semibold text-white">${this.esc(p.nama)}</td>
+                              <td class="p-2.5 text-sky-300">Kls ${this.esc(p.kelas)}</td>
+                              <td class="p-2.5 font-bold text-amber-300 tabular-nums">${p.score}</td>
+                              <td class="p-2.5 tabular-nums"><span class="text-emerald-400">${p.correctCount}</span> / <span class="text-rose-400">${p.wrongCount}</span></td>
+                              <td class="p-2.5 font-bold text-emerald-300 tabular-nums">${acc}%</td>
+                              <td class="p-2.5 text-slate-200">${pred}</td>
+                              <td class="p-2.5 uppercase text-slate-300">${p.level}</td>
+                              <td class="p-2.5 text-slate-300">${p.progressValue} ${this.esc(p.progressLabel)}</td>
+                            </tr>`;
+                        })
+                        .join('')}
+                    </tbody>
+                  </table>
+                </div>`
+          }
         </div>
 
         <div class="bg-[#111c33] border border-slate-700 rounded-2xl p-5">
@@ -813,6 +936,12 @@ export class TeacherUI {
   private bindMainEvents(): void {
     const main = this.container.querySelector<HTMLElement>('#teacher-main-content');
     if (!main) return;
+
+    main.querySelectorAll<HTMLButtonElement>('.js-export-excel').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        void this.downloadExcelReport();
+      });
+    });
 
     main.querySelectorAll<HTMLInputElement>('.js-el-check').forEach((chk) => {
       chk.addEventListener('change', () => {

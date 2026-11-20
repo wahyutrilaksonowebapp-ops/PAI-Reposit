@@ -256,6 +256,11 @@ export class RealtimeClient {
     sekolah: string;
     avatar: AvatarConfig;
     activity?: ParticipantActivity;
+    pos?: { x: number; y: number; z: number };
+    rotY?: number;
+    isReady?: boolean;
+    wasApproved?: boolean;
+    resumeMissionStartedAt?: number | null;
   }): void {
     const msg = { type: 'student:join', ...payload };
     this.lastJoinPayload = msg;

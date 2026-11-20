@@ -258,26 +258,91 @@ async function startServer(): Promise<void> {
 
   app.get('/api/export-excel', (_req, res) => {
     const ranked = computeRanks();
+    const activeGameName = GAME_NAMES[mission.gameId] || mission.gameId;
 
+    const getPredikat = (total: number, acc: number): string => {
+      if (total === 0) return 'Belum Mengerjakan';
+      if (acc >= 85) return 'Sangat Baik (A)';
+      if (acc >= 70) return 'Baik (B)';
+      if (acc >= 55) return 'Cukup (C)';
+      return 'Perlu Bimbingan (D)';
+    };
+
+    const activityLabels: Record<ParticipantActivity, string> = {
+      avatar: 'Membuat Avatar',
+      schoolyard: 'Halaman Sekolah',
+      playing: 'Sedang Bermain',
+      finished: 'Selesai Misi',
+    };
+
+    // Sheet 1: Rekap Nilai & Progres Peserta
     const pesertaRows = ranked.map((p) => {
       const total = p.correctCount + p.wrongCount;
       const accuracy = total > 0 ? Math.round((p.correctCount / total) * 100) : 0;
+      const avgTime =
+        p.answeredLog.length > 0
+          ? Number(
+              (
+                p.answeredLog.reduce((sum, entry) => sum + entry.responseTimeSec, 0) /
+                p.answeredLog.length
+              ).toFixed(1)
+            )
+          : 0;
       return {
         Peringkat: p.rank,
         'Nama Peserta': p.nama,
         Kelas: p.kelas,
         'Asal Sekolah': p.sekolah,
+        'Status Online': p.connected ? 'Online' : 'Offline',
+        Aktivitas: activityLabels[p.activity] ?? p.activity,
+        'Mini-Game': activeGameName,
         'Skor Akhir': p.score,
-        'Level Akhir': p.level.toUpperCase(),
+        'Nilai Konversi (0-100)': accuracy,
+        'Predikat Capaian': getPredikat(total, accuracy),
+        'Level AKM Akhir': p.level.toUpperCase(),
         'Jawaban Benar': p.correctCount,
         'Jawaban Salah': p.wrongCount,
+        'Total Soal Dijawab': total,
         'Akurasi (%)': accuracy,
         'Streak Tertinggi': p.maxStreak,
         'Progres Minigame': `${p.progressValue} ${p.progressLabel}`,
+        'Rata-rata Waktu Jawab (dtk)': avgTime,
         'Status Refleksi': p.finishedReflection ? 'Sudah Mengisi' : 'Belum',
       };
     });
 
+    // Sheet 2: Penguasaan per Elemen PAI (for diagnostic performance assessment)
+    const baseElements: Array<{ id: string; label: string }> = [
+      { id: 'quran_hadis', label: "Al-Qur'an Hadis" },
+      { id: 'akidah', label: 'Akidah' },
+      { id: 'akhlak', label: 'Akhlak' },
+      { id: 'fiqih', label: 'Fikih' },
+      { id: 'spi', label: 'SPI' },
+      ...persisted.customElements.map((el) => ({ id: el.id, label: el.shortName || el.name })),
+    ];
+
+    const elemenRows = ranked.map((p) => {
+      const row: Record<string, string | number> = {
+        Peringkat: p.rank,
+        'Nama Peserta': p.nama,
+        Kelas: p.kelas,
+        'Asal Sekolah': p.sekolah,
+        'Skor Akhir': p.score,
+      };
+      for (const el of baseElements) {
+        const logs = p.answeredLog.filter((l) => l.elementId === el.id);
+        if (logs.length === 0) {
+          row[el.label] = '-';
+        } else {
+          const ok = logs.filter((l) => l.isCorrect).length;
+          const pct = Math.round((ok / logs.length) * 100);
+          row[el.label] = `${ok}/${logs.length} (${pct}%)`;
+        }
+      }
+      return row;
+    });
+
+    // Sheet 3: Analisis Butir Soal AKM
     const questionStats = new Map<
       string,
       {
@@ -324,6 +389,7 @@ async function startServer(): Promise<void> {
       'Rata-rata Waktu (dtk)': s.total > 0 ? Number((s.totalTime / s.total).toFixed(1)) : 0,
     }));
 
+    // Sheet 4: Refleksi & Testimoni Siswa
     const testimoniRows = persisted.testimonials.map((t) => ({
       Waktu: new Date(t.createdAt).toLocaleString('id-ID'),
       'Nama Peserta': t.nama,
@@ -340,24 +406,49 @@ async function startServer(): Promise<void> {
     const ws1 = XLSX.utils.json_to_sheet(
       pesertaRows.length > 0 ? pesertaRows : [{ Info: 'Belum ada peserta terdaftar' }]
     );
+    ws1['!cols'] = [
+      { wch: 10 }, { wch: 22 }, { wch: 8 }, { wch: 20 }, { wch: 12 }, { wch: 16 },
+      { wch: 22 }, { wch: 12 }, { wch: 18 }, { wch: 20 }, { wch: 14 }, { wch: 13 },
+      { wch: 13 }, { wch: 16 }, { wch: 12 }, { wch: 15 }, { wch: 18 }, { wch: 22 }, { wch: 15 },
+    ];
+
     const ws2 = XLSX.utils.json_to_sheet(
+      elemenRows.length > 0 ? elemenRows : [{ Info: 'Belum ada data penguasaan elemen' }]
+    );
+    ws2['!cols'] = [
+      { wch: 10 }, { wch: 22 }, { wch: 8 }, { wch: 20 }, { wch: 12 },
+      ...baseElements.map(() => ({ wch: 18 })),
+    ];
+
+    const ws3 = XLSX.utils.json_to_sheet(
       soalRows.length > 0 ? soalRows : [{ Info: 'Belum ada data jawaban soal' }]
     );
-    const ws3 = XLSX.utils.json_to_sheet(
+    ws3['!cols'] = [
+      { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 10 },
+      { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 18 }, { wch: 20 },
+    ];
+
+    const ws4 = XLSX.utils.json_to_sheet(
       testimoniRows.length > 0 ? testimoniRows : [{ Info: 'Belum ada refleksi tersimpan' }]
     );
+    ws4['!cols'] = [
+      { wch: 20 }, { wch: 20 }, { wch: 8 }, { wch: 20 },
+      { wch: 20 }, { wch: 10 }, { wch: 36 }, { wch: 30 }, { wch: 30 },
+    ];
 
-    XLSX.utils.book_append_sheet(wb, ws1, 'Rekap Peserta');
-    XLSX.utils.book_append_sheet(wb, ws2, 'Analisis Butir Soal');
-    XLSX.utils.book_append_sheet(wb, ws3, 'Refleksi & Testimoni');
+    XLSX.utils.book_append_sheet(wb, ws1, 'Rekap Nilai & Progres');
+    XLSX.utils.book_append_sheet(wb, ws2, 'Penguasaan Elemen PAI');
+    XLSX.utils.book_append_sheet(wb, ws3, 'Analisis Butir Soal');
+    XLSX.utils.book_append_sheet(wb, ws4, 'Refleksi & Testimoni');
 
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-    const filename = `Laporan_PAI_Nusantara_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const filename = `Laporan_Penilaian_PAI_${new Date().toISOString().slice(0, 10)}.xlsx`;
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     );
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-store');
     res.send(buffer);
   });
 
@@ -396,13 +487,33 @@ async function startServer(): Promise<void> {
           existing.kelas = kelas;
           existing.sekolah = sekolah;
           if (avatar) existing.avatar = avatar;
-          existing.activity = activity;
+          // Preserve active playing state seamlessly if student reloaded mid-mission
+          if (mission.status === 'playing' && existing.approvedForMission) {
+            existing.activity = 'playing';
+          } else {
+            existing.activity = activity;
+          }
           existing.connected = true;
         } else {
           // Spread spawn points neatly around the front courtyard near the flagpole
           const idx = participants.size;
           const angle = idx * 0.85 - 1.2;
           const radius = 2.4 + (idx % 3) * 1.15;
+          const reqPos = msg.pos as { x?: number; y?: number; z?: number } | undefined;
+          const spawnPos =
+            reqPos && Number.isFinite(reqPos.x) && Number.isFinite(reqPos.z)
+              ? { x: Number(reqPos.x), y: 0.08, z: Number(reqPos.z) }
+              : {
+                  x: Number((Math.sin(angle) * radius).toFixed(2)),
+                  y: 0.08,
+                  z: Number((4.6 + Math.cos(angle) * 1.6).toFixed(2)),
+                };
+          const canResumeApproved =
+            mission.status === 'playing' &&
+            Boolean(msg.wasApproved) &&
+            typeof msg.resumeMissionStartedAt === 'number' &&
+            msg.resumeMissionStartedAt === mission.startedAt;
+
           participants.set(id, {
             id,
             nama,
@@ -420,15 +531,11 @@ async function startServer(): Promise<void> {
             activeBuff: 'none',
             progressValue: 0,
             progressLabel: 'Siap',
-            pos: {
-              x: Number((Math.sin(angle) * radius).toFixed(2)),
-              y: 0.08,
-              z: Number((4.6 + Math.cos(angle) * 1.6).toFixed(2)),
-            },
-            rotY: Math.PI,
-            activity,
-            isReady: false,
-            approvedForMission: false,
+            pos: spawnPos,
+            rotY: typeof msg.rotY === 'number' && Number.isFinite(msg.rotY) ? msg.rotY : Math.PI,
+            activity: canResumeApproved ? 'playing' : activity,
+            isReady: Boolean(msg.isReady),
+            approvedForMission: canResumeApproved,
             connected: true,
             finishedReflection: false,
             answeredLog: [],
