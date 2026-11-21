@@ -17,6 +17,10 @@ import {
 import { paiBank } from '../data/paiBank.ts';
 import { realtimeClient } from '../services/RealtimeClient.ts';
 import { QuizEngine } from '../game/QuizEngine.ts';
+import {
+  describeLeaderboardFormula,
+  normalizeLeaderboardParams,
+} from '../game/LeaderboardScoring.ts';
 import { soundFX } from '../audio/SoundFX.ts';
 import type { PaiWorldScript } from '../scene/PaiWorldScript.ts';
 import { ChatSidebar } from './ChatSidebar.ts';
@@ -79,11 +83,30 @@ export class StudentUI {
   private lastDiceNumber = 0;
 
   private tickInterval: ReturnType<typeof setInterval> | null = null;
+  private lastActivityAt = Date.now();
+  private lastIdleAlertAt = 0;
   private onResizeBound = () => this.syncCameraCentering();
   private onBeforeUnloadBound = () => this.persistStudentSession();
   private onVisibilityChangeBound = () => {
     if (document.visibilityState === 'hidden') {
       this.persistStudentSession();
+      if (
+        this.screen === 'playing' &&
+        this.snapshot?.mission.status === 'playing' &&
+        !this.showReflectionModal &&
+        this.studentId
+      ) {
+        void realtimeClient.reportTeacherAlert({
+          kind: 'off_mission_tab_switch',
+          severity: 'warning',
+          participantId: this.studentId,
+          participantName: this.nama || 'Peserta',
+          participantKelas: this.kelas,
+          detail: `${this.nama || 'Peserta'} (Kls ${this.kelas}) berpindah tab / meninggalkan layar misi saat permainan sedang berlangsung.`,
+        });
+      }
+    } else {
+      this.lastActivityAt = Date.now();
     }
   };
 
@@ -158,6 +181,7 @@ export class StudentUI {
         this.lastPos = pos;
         this.lastRotY = rotY;
         if (this.studentId) {
+          this.lastActivityAt = Date.now();
           realtimeClient.sendMove(this.studentId, pos, rotY);
           this.persistStudentSession();
         }
@@ -442,6 +466,11 @@ export class StudentUI {
       this.isReady = self.isReady;
     }
 
+    // Keep student QuizEngine synchronized with teacher's realtime leaderboard scoring parameters
+    if (snapshot.mission.leaderboardParams) {
+      this.quiz.setLeaderboardParams(snapshot.mission.leaderboardParams);
+    }
+
     // If teacher returned room to lobby while student was in game / reflection
     if (snapshot.mission.status === 'lobby' && this.screen === 'playing' && !this.showReflectionModal) {
       this.screen = 'schoolyard';
@@ -642,6 +671,24 @@ export class StudentUI {
           this.submitAnswer(true);
         }
       }
+
+      // Detect prolonged inactivity (>45s without answering or moving) during active mission
+      if (
+        this.snapshot?.mission.status === 'playing' &&
+        this.studentId &&
+        Date.now() - this.lastActivityAt > 45_000 &&
+        Date.now() - this.lastIdleAlertAt > 55_000
+      ) {
+        this.lastIdleAlertAt = Date.now();
+        void realtimeClient.reportTeacherAlert({
+          kind: 'off_mission_idle',
+          severity: 'warning',
+          participantId: this.studentId,
+          participantName: this.nama || 'Peserta',
+          participantKelas: this.kelas,
+          detail: `${this.nama || 'Peserta'} (Kls ${this.kelas}) terdeteksi tidak aktif selama >45 detik di dalam arena misi.`,
+        });
+      }
     }, 150);
   }
 
@@ -663,7 +710,14 @@ export class StudentUI {
         : paiBank.getAllElements().map((e) => e.id);
     const qDur = mission?.questionDurationSec ?? 25;
 
-    this.quiz.reset({ gameId, elementIds, questionDurationSec: qDur });
+    this.quiz.reset({
+      gameId,
+      elementIds,
+      questionDurationSec: qDur,
+      leaderboardParams: mission?.leaderboardParams,
+    });
+    this.lastActivityAt = Date.now();
+    this.lastIdleAlertAt = 0;
     this.screen = 'playing';
     this.world.setViewMode('minigame', gameId);
     if (this.snapshot) {
@@ -723,6 +777,7 @@ export class StudentUI {
   private handleOptionInteraction(idx: number): void {
     const q = this.quiz.currentQuestion;
     if (!q || this.awaitingNext) return;
+    this.lastActivityAt = Date.now();
     soundFX.playClick();
 
     if (q.type === 'PGK') {
@@ -1869,6 +1924,16 @@ export class StudentUI {
       soundFX.playClick();
       if (this.studentId) {
         realtimeClient.updateActivity(this.studentId, 'avatar');
+        if (this.snapshot?.mission.status === 'playing') {
+          void realtimeClient.reportTeacherAlert({
+            kind: 'off_mission_wrong_screen',
+            severity: 'warning',
+            participantId: this.studentId,
+            participantName: this.nama || 'Peserta',
+            participantKelas: this.kelas,
+            detail: `${this.nama || 'Peserta'} (Kls ${this.kelas}) membuka Studio Avatar di luar misi saat sesi permainan sedang berlangsung.`,
+          });
+        }
       }
       this.screen = 'avatar';
       this.world.setViewMode('avatar_studio');
@@ -2308,11 +2373,15 @@ export class StudentUI {
     participants: RoomSnapshot['participants'],
     gameMeta: ReturnType<typeof getMinigameMeta>
   ): string {
+    const lp = normalizeLeaderboardParams(this.snapshot?.mission.leaderboardParams, gameMeta.id);
     return `
       <div class="modal-backdrop">
         <div class="modal-card max-w-lg">
           <div class="flex items-center justify-between pb-3 border-b border-slate-700 mb-3">
-            <h3 class="font-display font-bold text-lg text-amber-300">Klasemen Live · ${this.esc(gameMeta.name)}</h3>
+            <div>
+              <h3 class="font-display font-bold text-lg text-amber-300">Klasemen Live · ${this.esc(gameMeta.name)}</h3>
+              <p class="text-[11px] text-sky-300 mt-0.5">${this.esc(describeLeaderboardFormula(lp))}</p>
+            </div>
             <button id="btn-close-lb" class="btn-secondary text-xs">Tutup ✕</button>
           </div>
           <div class="space-y-2 max-h-[60vh] overflow-y-auto">
@@ -2320,8 +2389,10 @@ export class StudentUI {
               participants.length === 0
                 ? `<p class="text-xs text-slate-400 text-center py-6">Menunggu data skor kelas...</p>`
                 : participants
-                    .map(
-                      (p, i) => `
+                    .map((p, i) => {
+                      const total = p.correctCount + p.wrongCount;
+                      const acc = total > 0 ? Math.round((p.correctCount / total) * 100) : 0;
+                      return `
                   <div class="p-2.5 rounded-xl flex items-center justify-between text-xs border ${
                     p.id === this.studentId
                       ? 'bg-emerald-950/70 border-emerald-400'
@@ -2330,11 +2401,11 @@ export class StudentUI {
                     <div>
                       <span class="font-bold text-amber-300 mr-2">#${i + 1}</span>
                       <span class="font-bold text-white">${this.esc(p.nama)}</span>
-                      <span class="text-slate-400 ml-1">(${p.progressValue} ${this.esc(gameMeta.leaderboardUnit)})</span>
+                      <span class="text-slate-400 ml-1">(${p.progressValue} ${this.esc(gameMeta.leaderboardUnit)} · ${acc}%)</span>
                     </div>
                     <span class="font-display font-bold text-amber-300 tabular-nums">${p.score} pts</span>
-                  </div>`
-                    )
+                  </div>`;
+                    })
                     .join('')
             }
           </div>

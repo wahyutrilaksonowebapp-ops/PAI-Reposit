@@ -1,6 +1,204 @@
-import type { AvatarConfig, GameId, MinigameMeta } from './types.ts';
+import type {
+  AvatarConfig,
+  GameId,
+  LeaderboardParams,
+  LeaderboardPresetId,
+  MinigameMeta,
+} from './types.ts';
 
 export const TEACHER_ADMIN_CODE = 'gpaibeji';
+
+export const BLOCKED_CHAT_WORDS: string[] = [
+  'anjing',
+  'anjir',
+  'bangsat',
+  'bajingan',
+  'brengsek',
+  'bego',
+  'bodoh',
+  'goblok',
+  'tolol',
+  'kampret',
+  'kontol',
+  'memek',
+  'ngentot',
+  'jancok',
+  'jancuk',
+  'asu',
+  'taek',
+  'tai',
+  'setan',
+  'iblis',
+  'fuck',
+  'shit',
+  'bitch',
+  'asshole',
+  'stupid',
+  'idiot',
+];
+
+export const LEADERBOARD_PRESETS: Record<
+  Exclude<LeaderboardPresetId, 'custom'>,
+  {
+    label: string;
+    shortDesc: string;
+    params: LeaderboardParams;
+  }
+> = {
+  balanced: {
+    label: 'Seimbang',
+    shortDesc: 'Gabungan ketepatan, kecepatan & progres arena',
+    params: {
+      preset: 'balanced',
+      sortBy: 'composite',
+      accuracyWeight: 45,
+      speedWeight: 30,
+      progressWeight: 25,
+      streakBonus: 12,
+      wrongPenalty: 10,
+      fastThresholdSec: 12,
+    },
+  },
+  speed_rush: {
+    label: 'Fokus Kecepatan',
+    shortDesc: 'Bonus tinggi bagi jawaban kilat & sprint',
+    params: {
+      preset: 'speed_rush',
+      sortBy: 'composite',
+      accuracyWeight: 25,
+      speedWeight: 60,
+      progressWeight: 15,
+      streakBonus: 15,
+      wrongPenalty: 5,
+      fastThresholdSec: 10,
+    },
+  },
+  accuracy_master: {
+    label: 'Fokus Ketepatan',
+    shortDesc: 'Utamakan akurasi nalar AKM & minim kesalahan',
+    params: {
+      preset: 'accuracy_master',
+      sortBy: 'composite',
+      accuracyWeight: 65,
+      speedWeight: 15,
+      progressWeight: 20,
+      streakBonus: 10,
+      wrongPenalty: 20,
+      fastThresholdSec: 16,
+    },
+  },
+  progress_climb: {
+    label: 'Fokus Progres Arena',
+    shortDesc: 'Tonjolkan capaian tangga, jembatan & basecamp',
+    params: {
+      preset: 'progress_climb',
+      sortBy: 'composite',
+      accuracyWeight: 35,
+      speedWeight: 15,
+      progressWeight: 50,
+      streakBonus: 10,
+      wrongPenalty: 12,
+      fastThresholdSec: 14,
+    },
+  },
+};
+
+export const DEFAULT_LEADERBOARD_PARAMS_BY_GAME: Record<GameId, LeaderboardParams> = {
+  puncak_nalar: {
+    preset: 'balanced',
+    sortBy: 'composite',
+    accuracyWeight: 45,
+    speedWeight: 25,
+    progressWeight: 30,
+    streakBonus: 12,
+    wrongPenalty: 15,
+    fastThresholdSec: 12,
+  },
+  sky_bridge: {
+    preset: 'progress_climb',
+    sortBy: 'composite',
+    accuracyWeight: 40,
+    speedWeight: 15,
+    progressWeight: 45,
+    streakBonus: 10,
+    wrongPenalty: 10,
+    fastThresholdSec: 14,
+  },
+  grand_prix: {
+    preset: 'speed_rush',
+    sortBy: 'composite',
+    accuracyWeight: 25,
+    speedWeight: 60,
+    progressWeight: 15,
+    streakBonus: 15,
+    wrongPenalty: 5,
+    fastThresholdSec: 10,
+  },
+  lost_scroll: {
+    preset: 'accuracy_master',
+    sortBy: 'composite',
+    accuracyWeight: 65,
+    speedWeight: 15,
+    progressWeight: 20,
+    streakBonus: 10,
+    wrongPenalty: 15,
+    fastThresholdSec: 16,
+  },
+  edu_craft: {
+    preset: 'progress_climb',
+    sortBy: 'composite',
+    accuracyWeight: 45,
+    speedWeight: 15,
+    progressWeight: 40,
+    streakBonus: 10,
+    wrongPenalty: 8,
+    fastThresholdSec: 15,
+  },
+  portal_dimension: {
+    preset: 'accuracy_master',
+    sortBy: 'composite',
+    accuracyWeight: 60,
+    speedWeight: 20,
+    progressWeight: 20,
+    streakBonus: 14,
+    wrongPenalty: 18,
+    fastThresholdSec: 14,
+  },
+  board_adventure: {
+    preset: 'balanced',
+    sortBy: 'composite',
+    accuracyWeight: 40,
+    speedWeight: 25,
+    progressWeight: 35,
+    streakBonus: 12,
+    wrongPenalty: 8,
+    fastThresholdSec: 12,
+  },
+  astro_scanner: {
+    preset: 'speed_rush',
+    sortBy: 'composite',
+    accuracyWeight: 35,
+    speedWeight: 45,
+    progressWeight: 20,
+    streakBonus: 14,
+    wrongPenalty: 10,
+    fastThresholdSec: 11,
+  },
+  climb_summit: {
+    preset: 'progress_climb',
+    sortBy: 'composite',
+    accuracyWeight: 40,
+    speedWeight: 15,
+    progressWeight: 45,
+    streakBonus: 12,
+    wrongPenalty: 12,
+    fastThresholdSec: 15,
+  },
+};
+
+export function getDefaultLeaderboardParams(gameId: GameId): LeaderboardParams {
+  return { ...(DEFAULT_LEADERBOARD_PARAMS_BY_GAME[gameId] ?? LEADERBOARD_PRESETS.balanced.params) };
+}
 
 export const MINIGAMES: MinigameMeta[] = [
   {

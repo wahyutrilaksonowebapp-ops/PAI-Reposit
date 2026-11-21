@@ -115,6 +115,47 @@ export interface ChatMessage {
   deleted?: boolean;
 }
 
+export type LeaderboardPresetId =
+  | 'balanced'
+  | 'speed_rush'
+  | 'accuracy_master'
+  | 'progress_climb'
+  | 'custom';
+
+export type LeaderboardSortBy = 'composite' | 'score' | 'accuracy' | 'speed' | 'progress';
+
+export interface LeaderboardParams {
+  preset: LeaderboardPresetId;
+  sortBy: LeaderboardSortBy;
+  accuracyWeight: number;   // 0..100
+  speedWeight: number;      // 0..100
+  progressWeight: number;   // 0..100
+  streakBonus: number;      // 0..50 extra bonus per streak milestone
+  wrongPenalty: number;     // 0..50 penalty points on wrong answer
+  fastThresholdSec: number; // 3..60 seconds threshold for max speed bonus
+}
+
+export type TeacherAlertKind =
+  | 'off_mission_tab_switch'
+  | 'off_mission_wrong_screen'
+  | 'off_mission_idle'
+  | 'chat_moderation_blocked'
+  | 'chat_moderation_caps'
+  | 'chat_moderation_spam';
+
+export interface TeacherAlert {
+  id: string;
+  roomCode: string;
+  kind: TeacherAlertKind;
+  severity: 'warning' | 'danger';
+  participantId: string;
+  participantName: string;
+  participantKelas?: string;
+  detail: string;
+  chatText?: string;
+  createdAt: number;
+}
+
 export interface ParticipantState {
   id: string;
   nama: string;
@@ -141,6 +182,8 @@ export interface ParticipantState {
   finishedReflection: boolean;
   answeredLog: AnswerLogEntry[];
   joinedAt: number;
+  lastSeenAt?: number;
+  typingAt?: number;
 }
 
 export interface MissionConfig {
@@ -152,6 +195,7 @@ export interface MissionConfig {
   gameDurationMin: number;
   startedAt: number | null;
   endsAt: number | null;
+  leaderboardParams?: LeaderboardParams;
 }
 
 export interface TestimonialItem {
@@ -190,5 +234,6 @@ export interface RoomSnapshot {
   chatMessages: ChatMessage[];
   chatMutedAll: boolean;
   mutedParticipantIds: string[];
+  teacherAlerts?: TeacherAlert[];
   serverTime: number;
 }

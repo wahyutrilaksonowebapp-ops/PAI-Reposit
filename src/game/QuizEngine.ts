@@ -3,9 +3,12 @@ import type {
   BuffType,
   DifficultyLevel,
   GameId,
+  LeaderboardParams,
   QuestionItem,
   QuestionType,
 } from '../types.ts';
+import { getDefaultLeaderboardParams } from '../constants.ts';
+import { normalizeLeaderboardParams } from './LeaderboardScoring.ts';
 import { paiBank } from '../data/paiBank.ts';
 
 export interface EvaluationResult {
@@ -63,6 +66,7 @@ export class QuizEngine {
   public questionStartedAt = 0;
   public elementIds: string[] = ['quran_hadis', 'akidah', 'akhlak', 'fiqih', 'spi'];
   public gameId: GameId = 'puncak_nalar';
+  public leaderboardParams: LeaderboardParams = getDefaultLeaderboardParams('puncak_nalar');
 
   private askedIds = new Set<string>();
   private summitPacketIndex = 0; // 0: PG, 1: PGK, 2: BS
@@ -71,14 +75,20 @@ export class QuizEngine {
   public portalDimensionLevel: DifficultyLevel = 'mudah';
   public portalStars: Record<DifficultyLevel, number> = { mudah: 0, sedang: 0, sulit: 0 };
 
+  setLeaderboardParams(params?: LeaderboardParams): void {
+    this.leaderboardParams = normalizeLeaderboardParams(params, this.gameId);
+  }
+
   reset(params: {
     gameId: GameId;
     elementIds: string[];
     questionDurationSec: number;
+    leaderboardParams?: LeaderboardParams;
   }): void {
     this.gameId = params.gameId;
     this.elementIds = params.elementIds.length > 0 ? [...params.elementIds] : ['quran_hadis'];
     this.questionDurationSec = Math.max(10, params.questionDurationSec);
+    this.leaderboardParams = normalizeLeaderboardParams(params.leaderboardParams, params.gameId);
 
     this.score = 0;
     this.level = params.gameId === 'portal_dimension' ? 'mudah' : 'sedang';
@@ -193,9 +203,19 @@ export class QuizEngine {
     let levelChanged: 'up' | 'down' | 'same' = 'same';
     let triggeredBuffChoice = false;
 
+    const lp = this.leaderboardParams;
+
     if (isCorrect) {
-      // Speed-based base score: 45 to 100 points
-      const basePoints = Math.round(45 + 55 * remainingRatio);
+      // Dynamic speed vs accuracy scoring driven by teacher's realtime leaderboardParams
+      const totalW = Math.max(1, lp.accuracyWeight + lp.speedWeight);
+      const accShare = lp.accuracyWeight / totalW;
+      const spdShare = lp.speedWeight / totalW;
+      const speedFactor =
+        elapsedSec <= lp.fastThresholdSec
+          ? 1
+          : Math.max(0.15, remainingRatio);
+      const basePoints = Math.round(45 + 55 * accShare + 65 * spdShare * speedFactor);
+
       if (this.activeBuff === 'double_risk') {
         pointsDelta = basePoints * 2;
       } else if (this.activeBuff === 'boost_1_5') {
@@ -207,6 +227,11 @@ export class QuizEngine {
       // Bonus for Sulit or PGK
       if (q.difficulty === 'sulit') pointsDelta += 15;
       if (q.type === 'PGK') pointsDelta += 10;
+
+      // Dynamic streak bonus
+      if (this.streak >= 1 && lp.streakBonus > 0) {
+        pointsDelta += Math.round(Math.min(lp.streakBonus * 2, this.streak * (lp.streakBonus * 0.35)));
+      }
 
       this.score += pointsDelta;
       this.correctCount += 1;
@@ -237,15 +262,13 @@ export class QuizEngine {
 
       this.advanceProgressOnCorrect(q);
     } else {
-      // Wrong answer rules
+      // Wrong answer rules (respects active buff and teacher wrongPenalty parameter)
       if (this.activeBuff === 'double_risk') {
         pointsDelta = -100;
       } else if (this.activeBuff === 'boost_1_5') {
         pointsDelta = -50;
-      } else if (this.gameId === 'puncak_nalar') {
-        pointsDelta = -10;
       } else {
-        pointsDelta = 0;
+        pointsDelta = -Math.max(0, lp.wrongPenalty);
       }
 
       this.score = Math.max(0, this.score + pointsDelta);

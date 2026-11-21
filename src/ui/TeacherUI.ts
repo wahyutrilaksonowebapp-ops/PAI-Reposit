@@ -1,14 +1,29 @@
+import * as XLSX from 'xlsx';
 import type {
   ChatMessage,
   DifficultyLevel,
   GameId,
+  LeaderboardParams,
+  LeaderboardPresetId,
+  LeaderboardSortBy,
   PaiElement,
   ParticipantState,
   QuestionItem,
   QuestionType,
   RoomSnapshot,
+  TeacherAlert,
 } from '../types.ts';
-import { getMinigameMeta, MINIGAMES } from '../constants.ts';
+import {
+  getDefaultLeaderboardParams,
+  getMinigameMeta,
+  LEADERBOARD_PRESETS,
+  MINIGAMES,
+} from '../constants.ts';
+import {
+  describeLeaderboardFormula,
+  normalizeLeaderboardParams,
+  rankParticipants,
+} from '../game/LeaderboardScoring.ts';
 import { paiBank } from '../data/paiBank.ts';
 import { realtimeClient } from '../services/RealtimeClient.ts';
 import { soundFX } from '../audio/SoundFX.ts';
@@ -17,6 +32,11 @@ import { TeacherAnalyticsOverlay } from './TeacherAnalyticsOverlay.ts';
 import { clearSession, saveSession } from '../services/SessionStorage.ts';
 
 export type TeacherTab = 'misi' | 'leaderboard' | 'materi' | 'soal' | 'laporan';
+
+interface ActiveToastEntry {
+  alert: TeacherAlert;
+  timer: ReturnType<typeof setTimeout> | null;
+}
 
 export class TeacherUI {
   private container: HTMLElement;
@@ -31,9 +51,10 @@ export class TeacherUI {
   private isConnected = true;
   private recentLoginIds = new Map<string, number>();
 
-  // Local mission draft synced with server
+  // Local mission draft synced with Firestore realtime
   private selectedElements = new Set<string>(['quran_hadis', 'akidah', 'akhlak', 'fiqih', 'spi']);
   private selectedGameId: GameId = 'puncak_nalar';
+  private leaderboardParams: LeaderboardParams = getDefaultLeaderboardParams('puncak_nalar');
   private questionDurationSec = 25;
   private gameDurationMin = 10;
   private questionFilterElement = 'all';
@@ -45,6 +66,11 @@ export class TeacherUI {
   private chatSidebar: ChatSidebar;
   private analyticsOverlay: TeacherAnalyticsOverlay;
   private mounted = false;
+
+  // Teacher Toast Notification & Moderation Alerts state
+  private activeToasts: ActiveToastEntry[] = [];
+  private alertsDrawerOpen = false;
+  private unreadAlertCount = 0;
 
   constructor(
     container: HTMLElement,
@@ -134,23 +160,128 @@ export class TeacherUI {
     soundFX.playClick();
     this.onToast('Menyiapkan file Excel (.xlsx) nilai & progres peserta...');
     try {
-      const res = await fetch('/api/export-excel', { cache: 'no-store' });
-      if (!res.ok) throw new Error('Gagal mengunduh laporan Excel.');
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
+      const snap = this.snapshot;
+      const participants = snap?.participants ?? [];
+      const gameMeta = getMinigameMeta(this.selectedGameId);
+      const lp = normalizeLeaderboardParams(this.leaderboardParams, this.selectedGameId);
+      const ranked = rankParticipants(participants, lp, this.selectedGameId);
+      const elements = paiBank.getAllElements();
+
+      const wb = XLSX.utils.book_new();
+
+      // Sheet 1: Rekap Nilai & Progres
+      const sheet1Rows = ranked.map((p) => {
+        const pred =
+          p.metrics.totalAnswered === 0
+            ? 'Belum Mulai'
+            : p.metrics.accuracyPct >= 85
+              ? 'Sangat Baik (A)'
+              : p.metrics.accuracyPct >= 70
+                ? 'Baik (B)'
+                : p.metrics.accuracyPct >= 55
+                  ? 'Cukup (C)'
+                  : 'Perlu Bimbingan';
+        return {
+          Peringkat: p.effectiveRank,
+          'Nama Peserta': p.nama,
+          Kelas: p.kelas,
+          Sekolah: p.sekolah,
+          'Mini-Game': gameMeta.name,
+          'Skor Terbobot': p.metrics.compositeScore,
+          'Skor Kuis': p.score,
+          Benar: p.correctCount,
+          Salah: p.wrongCount,
+          'Akurasi (%)': p.metrics.accuracyPct,
+          'Rata-rata Waktu (dtk)': p.metrics.avgResponseSec,
+          'Skor Kecepatan': p.metrics.speedScore,
+          Predikat: pred,
+          'Level AKM': p.level.toUpperCase(),
+          'Streak Maks': p.maxStreak,
+          [`Progres (${gameMeta.leaderboardMetric})`]: `${p.progressValue} ${gameMeta.leaderboardUnit}`,
+        };
+      });
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(
+          sheet1Rows.length > 0 ? sheet1Rows : [{ Info: 'Belum ada peserta terekam.' }]
+        ),
+        'Rekap Nilai'
+      );
+
+      // Sheet 2: Penguasaan per Elemen PAI
+      const sheet2Rows = elements.map((el) => {
+        let correct = 0;
+        let total = 0;
+        for (const p of participants) {
+          for (const a of p.answeredLog ?? []) {
+            if (a.elementId === el.id) {
+              total += 1;
+              if (a.isCorrect) correct += 1;
+            }
+          }
+        }
+        return {
+          'Elemen PAI': el.name,
+          Materi: el.materialTitle,
+          'Total Dijawab': total,
+          Benar: correct,
+          Salah: total - correct,
+          'Ketuntasan (%)': total > 0 ? Math.round((correct / total) * 100) : 0,
+        };
+      });
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheet2Rows), 'Per Elemen PAI');
+
+      // Sheet 3: Log Jawaban Butir AKM
+      const sheet3Rows: Array<Record<string, unknown>> = [];
+      for (const p of participants) {
+        for (const a of p.answeredLog ?? []) {
+          sheet3Rows.push({
+            Peserta: p.nama,
+            Kelas: p.kelas,
+            'ID Soal': a.questionId,
+            Elemen: a.elementId,
+            Kesukaran: a.difficulty.toUpperCase(),
+            Tipe: a.type,
+            Hasil: a.isCorrect ? 'Benar' : 'Salah',
+            'Delta Poin': a.pointsDelta,
+            'Waktu Jawab (dtk)': a.responseTimeSec,
+          });
+        }
+      }
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(
+          sheet3Rows.length > 0 ? sheet3Rows : [{ Info: 'Belum ada log jawaban soal.' }]
+        ),
+        'Analisis Butir AKM'
+      );
+
+      // Sheet 4: Refleksi & Testimoni Siswa
+      const sheet4Rows = (snap?.testimonials ?? []).map((t) => ({
+        Nama: t.nama,
+        Kelas: t.kelas,
+        Sekolah: t.sekolah,
+        'Mini-Game': t.gameName,
+        Skor: t.skor,
+        Refleksi: t.refleksi,
+        Komentar: t.komentar,
+        'Kritik & Saran': t.kritikSaran,
+      }));
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(
+          sheet4Rows.length > 0 ? sheet4Rows : [{ Info: 'Belum ada refleksi siswa.' }]
+        ),
+        'Refleksi Siswa'
+      );
+
       const dateStr = new Date().toISOString().slice(0, 10);
-      a.href = url;
-      a.download = `Laporan_Penilaian_PAI_${dateStr}.xlsx`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      XLSX.writeFile(wb, `Laporan_Penilaian_PAI_${this.roomCode}_${dateStr}.xlsx`);
       soundFX.playCorrect();
       this.onToast('Laporan Penilaian Excel (.xlsx) berhasil diunduh!');
     } catch {
       soundFX.playWrong();
-      this.onToast('Gagal mengekspor Excel. Pastikan server berjalan dan coba lagi.');
+      this.onToast('Gagal mengekspor Excel. Silakan coba lagi.');
     } finally {
       this.exportingExcel = false;
     }
@@ -162,6 +293,10 @@ export class TeacherUI {
       clearInterval(this.timerInterval);
       this.timerInterval = null;
     }
+    for (const t of this.activeToasts) {
+      if (t.timer) clearTimeout(t.timer);
+    }
+    this.activeToasts = [];
     this.analyticsOverlay.destroy();
     this.chatSidebar.unmount();
     if (clearSaved) {
@@ -175,6 +310,10 @@ export class TeacherUI {
     this.snapshot = snapshot;
     paiBank.setCustomContent(snapshot.customElements, snapshot.customQuestions);
     this.selectedGameId = snapshot.mission.gameId;
+    this.leaderboardParams = normalizeLeaderboardParams(
+      snapshot.mission.leaderboardParams,
+      snapshot.mission.gameId
+    );
     this.questionDurationSec = snapshot.mission.questionDurationSec;
     this.gameDurationMin = snapshot.mission.gameDurationMin;
     if (snapshot.roomCode && snapshot.roomCode !== this.roomCode) {
@@ -193,20 +332,22 @@ export class TeacherUI {
     this.chatSidebar.updateMessages(snapshot);
     this.analyticsOverlay.update(snapshot);
     this.updateHeaderCounters();
+    this.updateAlertsUI();
     this.updateClockDisplay();
 
     if (!rerender) return;
 
-    // Avoid interrupting text typing inside "Kelola Materi" or "Bank Soal" forms
+    // Avoid interrupting text typing inside "Kelola Materi" or "Bank Soal" forms or dragging range sliders
     const mainEl = this.container.querySelector('#teacher-main-content');
-    const active = document.activeElement;
-    const isTypingInMainForm =
+    const active = document.activeElement as HTMLElement | null;
+    const isInteractingWithInput =
       Boolean(mainEl && active && mainEl.contains(active)) &&
-      (active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA' || active?.tagName === 'SELECT') &&
-      (this.activeTab === 'materi' || this.activeTab === 'soal');
+      ((active?.tagName === 'INPUT' && (active as HTMLInputElement).type === 'range') ||
+        ((active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA' || active?.tagName === 'SELECT') &&
+          (this.activeTab === 'materi' || this.activeTab === 'soal')));
 
     this.renderNav();
-    if (!isTypingInMainForm) {
+    if (!isInteractingWithInput) {
       this.renderMainContent();
     }
   }
@@ -224,6 +365,306 @@ export class TeacherUI {
         : `Peserta kembali online: ${participant.nama} (Kelas ${participant.kelas})`
     );
     this.applySnapshot(snapshot, true);
+  }
+
+  handleTeacherAlert(alert: TeacherAlert, snapshot: RoomSnapshot): void {
+    this.snapshot = snapshot;
+    if (!this.mounted) return;
+
+    if (alert.severity === 'danger') {
+      soundFX.playWrong();
+    } else {
+      soundFX.playSabotage();
+    }
+
+    if (!this.alertsDrawerOpen) {
+      this.unreadAlertCount += 1;
+    }
+    this.pushToastAlert(alert);
+    this.updateAlertsUI();
+  }
+
+  private pushToastAlert(alert: TeacherAlert): void {
+    // Deduplicate identical toast ID
+    if (this.activeToasts.some((t) => t.alert.id === alert.id)) return;
+    // Keep max 4 visible toasts simultaneously
+    while (this.activeToasts.length >= 4) {
+      const oldest = this.activeToasts.shift();
+      if (oldest?.timer) clearTimeout(oldest.timer);
+    }
+
+    const entry: ActiveToastEntry = {
+      alert,
+      timer: setTimeout(() => {
+        this.dismissToastCard(alert.id);
+      }, 10_000),
+    };
+    this.activeToasts.push(entry);
+    this.renderToastStack();
+  }
+
+  private dismissToastCard(alertId: string): void {
+    const idx = this.activeToasts.findIndex((t) => t.alert.id === alertId);
+    if (idx < 0) return;
+    const [removed] = this.activeToasts.splice(idx, 1);
+    if (removed?.timer) clearTimeout(removed.timer);
+    this.renderToastStack();
+  }
+
+  private getAlertBadgeMeta(kind: TeacherAlert['kind']): { title: string; badge: string; isChat: boolean } {
+    switch (kind) {
+      case 'chat_moderation_blocked':
+        return { title: 'Moderasi Chat · Pesan Diblokir', badge: 'KATA TERLARANG', isChat: true };
+      case 'chat_moderation_caps':
+        return { title: 'Moderasi Chat · Huruf Kapital', badge: 'PERLU PANTAUAN', isChat: true };
+      case 'chat_moderation_spam':
+        return { title: 'Moderasi Chat · Spam Cepat', badge: 'ANTI SPAM', isChat: true };
+      case 'off_mission_tab_switch':
+        return { title: 'Deteksi Luar Misi · Pindah Tab', badge: 'KELUAR LAYAR', isChat: false };
+      case 'off_mission_wrong_screen':
+        return { title: 'Deteksi Luar Misi · Menu Lain', badge: 'DI LUAR MISI', isChat: false };
+      case 'off_mission_idle':
+      default:
+        return { title: 'Deteksi Luar Misi · Tidak Aktif', badge: 'IDLE >45 DTK', isChat: false };
+    }
+  }
+
+  private renderToastStack(): void {
+    const stack = this.container.querySelector<HTMLElement>('#teacher-toast-container');
+    if (!stack) return;
+
+    const mutedIds = new Set(this.snapshot?.mutedParticipantIds ?? []);
+    stack.innerHTML = this.activeToasts
+      .map(({ alert }) => {
+        const meta = this.getAlertBadgeMeta(alert.kind);
+        const isDanger = alert.severity === 'danger';
+        const isMuted = mutedIds.has(alert.participantId);
+        const timeStr = new Date(alert.createdAt).toLocaleTimeString('id-ID', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        });
+        return `
+          <div
+            data-toast-id="${this.esc(alert.id)}"
+            class="pointer-events-auto w-80 sm:w-96 rounded-2xl p-3.5 shadow-2xl border backdrop-blur-md transition ${
+              isDanger
+                ? 'bg-[#2a0f18]/95 border-rose-500/80 text-rose-50'
+                : 'bg-[#241b0c]/95 border-amber-400/80 text-amber-50'
+            }"
+          >
+            <div class="flex items-start justify-between gap-2 mb-1.5">
+              <div class="flex flex-wrap items-center gap-1.5">
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-extrabold tracking-wide ${
+                  isDanger ? 'bg-rose-500 text-white' : 'bg-amber-400 text-slate-950'
+                }">${meta.badge}</span>
+                <span class="text-xs font-bold">${meta.title}</span>
+              </div>
+              <button
+                type="button"
+                data-dismiss-toast="${this.esc(alert.id)}"
+                class="js-dismiss-toast text-xs opacity-75 hover:opacity-100 px-1.5 py-0.5 rounded bg-black/25 cursor-pointer"
+                title="Tutup notifikasi"
+              >✕</button>
+            </div>
+            <p class="text-xs leading-relaxed opacity-95">${this.esc(alert.detail)}</p>
+            ${
+              alert.chatText
+                ? `<div class="mt-2 px-2.5 py-1.5 rounded-lg bg-black/35 border border-white/10 text-[11px] italic text-rose-200 truncate">“${this.esc(alert.chatText)}”</div>`
+                : ''
+            }
+            <div class="mt-2.5 flex items-center justify-between gap-2 pt-2 border-t border-white/10">
+              <span class="text-[10px] opacity-70 tabular-nums">${timeStr}</span>
+              <div class="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  data-toast-mute="${this.esc(alert.participantId)}"
+                  class="js-toast-mute px-2 py-1 rounded-lg text-[11px] font-bold cursor-pointer ${
+                    isMuted
+                      ? 'bg-emerald-500 text-slate-950'
+                      : 'bg-rose-600 hover:bg-rose-500 text-white'
+                  }"
+                >${isMuted ? 'Buka Bisu' : 'Bisukan Siswa'}</button>
+                ${
+                  meta.isChat
+                    ? `<button type="button" data-toast-open-chat="${this.esc(alert.id)}" class="js-toast-open-chat px-2 py-1 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 text-[11px] font-bold cursor-pointer">Buka Chat</button>`
+                    : `<button type="button" data-toast-focus-student="${this.esc(alert.id)}" class="js-toast-focus-student px-2 py-1 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-[11px] font-bold cursor-pointer">Pantau</button>`
+                }
+              </div>
+            </div>
+          </div>
+        `;
+      })
+      .join('');
+
+    stack.querySelectorAll<HTMLButtonElement>('.js-dismiss-toast').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.dismissToast;
+        if (id) this.dismissToastCard(id);
+      });
+    });
+
+    stack.querySelectorAll<HTMLButtonElement>('.js-toast-mute').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const pid = btn.dataset.toastMute;
+        if (!pid) return;
+        soundFX.playClick();
+        realtimeClient.toggleMuteStudent(pid);
+        this.onToast('Status bisu chat siswa diperbarui secara realtime.');
+        this.renderToastStack();
+      });
+    });
+
+    stack.querySelectorAll<HTMLButtonElement>('.js-toast-open-chat').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        soundFX.playClick();
+        this.openChatSidebar();
+        const id = btn.dataset.toastOpenChat;
+        if (id) this.dismissToastCard(id);
+      });
+    });
+
+    stack.querySelectorAll<HTMLButtonElement>('.js-toast-focus-student').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        soundFX.playClick();
+        if (this.activeTab !== 'misi') {
+          this.activeTab = 'misi';
+          this.persistTeacherSession();
+          this.renderNav();
+          this.renderMainContent();
+        }
+        const id = btn.dataset.toastFocusStudent;
+        if (id) this.dismissToastCard(id);
+      });
+    });
+  }
+
+  private openChatSidebar(): void {
+    if (this.chatOpen) {
+      this.chatSidebar.focusInput();
+      return;
+    }
+    this.chatOpen = true;
+    const aside = this.container.querySelector<HTMLElement>('#teacher-chat-sidebar');
+    const btn = this.container.querySelector<HTMLButtonElement>('#btn-toggle-teacher-chat');
+    if (aside) {
+      aside.classList.remove('hidden');
+      aside.classList.add('flex');
+    }
+    if (btn) {
+      btn.innerHTML = `Sembunyikan Chat <span id="teacher-chat-badge" class="hidden ml-1 px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-bold text-[10px]">0</span>`;
+    }
+    this.unreadChatCount = 0;
+    this.mountChatIfOpen();
+    this.updateChatBadge();
+    this.chatSidebar.focusInput();
+  }
+
+  private updateAlertsUI(): void {
+    const alerts = this.snapshot?.teacherAlerts ?? [];
+    const badge = this.container.querySelector<HTMLElement>('#teacher-alerts-badge');
+    if (badge) {
+      const count = this.unreadAlertCount > 0 ? this.unreadAlertCount : alerts.length;
+      if (count > 0) {
+        badge.textContent = String(count);
+        badge.classList.remove('hidden');
+      } else {
+        badge.classList.add('hidden');
+      }
+    }
+    if (this.alertsDrawerOpen) {
+      this.renderAlertsDrawer();
+    }
+  }
+
+  private renderAlertsDrawer(): void {
+    const drawer = this.container.querySelector<HTMLElement>('#teacher-alerts-drawer');
+    if (!drawer) return;
+    drawer.classList.toggle('hidden', !this.alertsDrawerOpen);
+    if (!this.alertsDrawerOpen) return;
+
+    const alerts = this.snapshot?.teacherAlerts ?? [];
+    const mutedIds = new Set(this.snapshot?.mutedParticipantIds ?? []);
+
+    drawer.innerHTML = `
+      <div class="flex items-center justify-between gap-2 pb-2.5 mb-2.5 border-b border-slate-700">
+        <div>
+          <div class="font-display font-bold text-sm text-amber-300">Log Notifikasi Moderasi & Luar Misi (${alerts.length})</div>
+          <div class="text-[11px] text-slate-400">Otomatis mendeteksi pindah tab, idle, dan kata tidak sopan di forum chat.</div>
+        </div>
+        <div class="flex items-center gap-1.5">
+          ${
+            alerts.length > 0
+              ? `<button id="btn-clear-all-alerts" type="button" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-rose-700 text-[11px] font-semibold text-rose-200 cursor-pointer">Bersihkan</button>`
+              : ''
+          }
+          <button id="btn-close-alerts-drawer" type="button" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-200 cursor-pointer">Tutup ✕</button>
+        </div>
+      </div>
+      ${
+        alerts.length === 0
+          ? `<div class="py-8 text-center text-xs text-slate-400">Belum ada peringatan moderasi atau aktivitas di luar misi. Kelas terpantau kondusif!</div>`
+          : `<div class="space-y-2 max-h-72 overflow-y-auto pr-1">
+              ${alerts
+                .map((a) => {
+                  const meta = this.getAlertBadgeMeta(a.kind);
+                  const isMuted = mutedIds.has(a.participantId);
+                  const timeStr = new Date(a.createdAt).toLocaleTimeString('id-ID', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                  });
+                  return `
+                    <div class="p-2.5 rounded-xl border text-xs ${
+                      a.severity === 'danger'
+                        ? 'bg-rose-950/50 border-rose-500/50'
+                        : 'bg-amber-950/40 border-amber-400/40'
+                    }">
+                      <div class="flex items-center justify-between gap-2 mb-1">
+                        <span class="font-bold ${a.severity === 'danger' ? 'text-rose-300' : 'text-amber-300'}">${meta.title}</span>
+                        <span class="text-[10px] text-slate-400 tabular-nums">${timeStr}</span>
+                      </div>
+                      <p class="text-slate-100 leading-snug">${this.esc(a.detail)}</p>
+                      ${a.chatText ? `<div class="mt-1 text-[11px] italic text-rose-200">“${this.esc(a.chatText)}”</div>` : ''}
+                      <div class="mt-2 flex items-center justify-end gap-1.5">
+                        <button type="button" data-drawer-mute="${this.esc(a.participantId)}" class="js-drawer-mute px-2 py-0.5 rounded bg-slate-800 hover:bg-rose-700 text-[10px] font-bold text-slate-200 cursor-pointer">
+                          ${isMuted ? 'Buka Bisu Chat' : 'Bisukan Siswa'}
+                        </button>
+                        <button type="button" data-drawer-del="${this.esc(a.id)}" class="js-drawer-del px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 cursor-pointer">
+                          Hapus
+                        </button>
+                      </div>
+                    </div>
+                  `;
+                })
+                .join('')}
+            </div>`
+      }
+    `;
+
+    drawer.querySelector('#btn-close-alerts-drawer')?.addEventListener('click', () => {
+      this.alertsDrawerOpen = false;
+      this.renderAlertsDrawer();
+    });
+    drawer.querySelector('#btn-clear-all-alerts')?.addEventListener('click', () => {
+      soundFX.playClick();
+      realtimeClient.clearTeacherAlerts();
+      this.unreadAlertCount = 0;
+      this.updateAlertsUI();
+      this.onToast('Seluruh log notifikasi moderasi dibersihkan.');
+    });
+    drawer.querySelectorAll<HTMLButtonElement>('.js-drawer-mute').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const pid = btn.dataset.drawerMute;
+        if (pid) realtimeClient.toggleMuteStudent(pid);
+      });
+    });
+    drawer.querySelectorAll<HTMLButtonElement>('.js-drawer-del').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.drawerDel;
+        if (id) realtimeClient.dismissTeacherAlert(id);
+      });
+    });
   }
 
   handleChatMessage(message: ChatMessage, snapshot: RoomSnapshot): void {
@@ -381,6 +822,10 @@ export class TeacherUI {
             <button id="btn-export-excel-top" class="btn-gold text-xs py-1.5 px-3">
               Unduh Excel (.xlsx)
             </button>
+            <button id="btn-toggle-alerts" type="button" class="btn-secondary text-xs relative" title="Notifikasi luar misi & moderasi chat">
+              Notifikasi
+              <span id="teacher-alerts-badge" class="hidden ml-1 px-1.5 py-0.5 rounded-full bg-rose-500 text-white font-bold text-[10px]">0</span>
+            </button>
             <button id="btn-toggle-teacher-chat" class="btn-secondary text-xs relative">
               ${this.chatOpen ? 'Sembunyikan Chat' : 'Buka Live Chat'}
               <span id="teacher-chat-badge" class="hidden ml-1 px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-bold text-[10px]">0</span>
@@ -408,6 +853,9 @@ export class TeacherUI {
             </div>
             <span class="text-[11px] text-slate-400">Murid wajib memasukkan kode yang sama agar dapat masuk ke ruang kelas ini.</span>
           </form>
+
+          <!-- Collapsible Alerts Drawer -->
+          <div id="teacher-alerts-drawer" class="hidden w-full mt-2 p-3.5 rounded-2xl bg-[#0d1527] border border-amber-400/40 shadow-xl"></div>
         </header>
 
         <!-- Navigation Tabs -->
@@ -421,8 +869,21 @@ export class TeacherUI {
             class="${this.chatOpen ? 'flex' : 'hidden'} w-80 lg:w-96 max-w-[90vw] border-l border-slate-700 bg-[#0f172a] shrink-0 flex-col min-h-0"
           ></aside>
         </div>
+
+        <!-- Floating Teacher Moderation & Off-Mission Toast Stack -->
+        <div id="teacher-toast-container" class="pointer-events-none fixed top-20 right-4 z-[70] flex flex-col gap-2.5 items-end"></div>
       </div>
     `;
+
+    this.container.querySelector('#btn-toggle-alerts')?.addEventListener('click', () => {
+      soundFX.playClick();
+      this.alertsDrawerOpen = !this.alertsDrawerOpen;
+      if (this.alertsDrawerOpen) {
+        this.unreadAlertCount = 0;
+      }
+      this.updateAlertsUI();
+      this.renderAlertsDrawer();
+    });
 
     this.container.querySelector('#btn-open-analytics-top')?.addEventListener('click', () => {
       this.openAnalyticsOverlay();
@@ -698,10 +1159,13 @@ export class TeacherUI {
             </div>
           </div>
 
-          <!-- Step C: Timers & Launch Controls -->
+          <!-- Step C: Realtime Leaderboard Parameters (Speed vs Accuracy vs Progress) -->
+          ${this.renderLeaderboardParamsPanel()}
+
+          <!-- Step D: Timers & Launch Controls -->
           <div class="bg-[#111c33] border border-slate-700 rounded-2xl p-4">
             <h2 class="font-display font-bold text-base text-amber-300 mb-3">
-              C. Durasi & Kendali Misi Kelas
+              D. Durasi & Kendali Misi Kelas
             </h2>
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
               <div>
@@ -835,85 +1299,227 @@ export class TeacherUI {
     `;
   }
 
+  private renderLeaderboardParamsPanel(): string {
+    const gameMeta = getMinigameMeta(this.selectedGameId);
+    const lp = normalizeLeaderboardParams(this.leaderboardParams, this.selectedGameId);
+    const presetKeys = Object.keys(LEADERBOARD_PRESETS) as Array<Exclude<LeaderboardPresetId, 'custom'>>;
+    const totalWeight = Math.max(1, lp.accuracyWeight + lp.speedWeight + lp.progressWeight);
+    const accShare = Math.round((lp.accuracyWeight / totalWeight) * 100);
+    const spdShare = Math.round((lp.speedWeight / totalWeight) * 100);
+    const prgShare = Math.max(0, 100 - accShare - spdShare);
+
+    return `
+      <div class="bg-[#111c33] border border-sky-500/40 rounded-2xl p-4 space-y-3.5">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 class="font-display font-bold text-base text-sky-300">
+              C. Parameter Leaderboard Realtime — ${this.esc(gameMeta.name)}
+            </h2>
+            <p class="text-[11px] text-slate-300 mt-0.5">
+              Atur bobot <strong>Kecepatan vs Ketepatan vs Progres</strong> secara realtime. Perubahan langsung memperbarui peringkat kelas & perhitungan poin kuis!
+            </p>
+          </div>
+          <button
+            type="button"
+            id="btn-reset-lp-default"
+            class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[11px] font-semibold text-amber-300 cursor-pointer"
+          >
+            Default ${this.esc(gameMeta.name)}
+          </button>
+        </div>
+
+        <!-- One-Click Presets -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          ${presetKeys
+            .map((key) => {
+              const item = LEADERBOARD_PRESETS[key];
+              const isAct = lp.preset === key;
+              return `
+                <button
+                  type="button"
+                  data-lp-preset="${key}"
+                  class="js-lp-preset text-left p-2.5 rounded-xl border transition cursor-pointer ${
+                    isAct
+                      ? 'bg-sky-950/80 border-sky-400 text-white shadow-sm shadow-sky-500/20'
+                      : 'bg-slate-900/70 border-slate-700 text-slate-300 hover:border-slate-500'
+                  }"
+                >
+                  <div class="font-bold text-xs ${isAct ? 'text-sky-300' : 'text-white'}">${item.label}</div>
+                  <div class="text-[10px] text-slate-400 mt-0.5 leading-snug">${item.shortDesc}</div>
+                </button>
+              `;
+            })
+            .join('')}
+        </div>
+
+        <!-- Visual Balance Bar -->
+        <div class="space-y-1">
+          <div class="flex items-center justify-between text-[11px] font-semibold">
+            <span class="text-emerald-300">Ketepatan ${accShare}%</span>
+            <span class="text-amber-300">Kecepatan ${spdShare}%</span>
+            <span class="text-sky-300">Progres (${this.esc(gameMeta.leaderboardMetric)}) ${prgShare}%</span>
+          </div>
+          <div class="w-full h-2.5 rounded-full overflow-hidden bg-slate-800 flex">
+            <div style="width:${accShare}%" class="bg-emerald-400 transition-all duration-200"></div>
+            <div style="width:${spdShare}%" class="bg-amber-400 transition-all duration-200"></div>
+            <div style="width:${prgShare}%" class="bg-sky-400 transition-all duration-200"></div>
+          </div>
+        </div>
+
+        <!-- Weight & Scoring Sliders -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+          <div class="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800">
+            <label class="flex items-center justify-between text-slate-300 font-semibold mb-1">
+              <span>Bobot Ketepatan</span>
+              <span id="lbl-lp-acc" class="text-emerald-300 font-bold tabular-nums">${lp.accuracyWeight}%</span>
+            </label>
+            <input id="inp-lp-acc" type="range" min="0" max="100" step="5" value="${lp.accuracyWeight}" class="w-full accent-emerald-400" />
+          </div>
+          <div class="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800">
+            <label class="flex items-center justify-between text-slate-300 font-semibold mb-1">
+              <span>Bobot Kecepatan</span>
+              <span id="lbl-lp-spd" class="text-amber-300 font-bold tabular-nums">${lp.speedWeight}%</span>
+            </label>
+            <input id="inp-lp-spd" type="range" min="0" max="100" step="5" value="${lp.speedWeight}" class="w-full accent-amber-400" />
+          </div>
+          <div class="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800">
+            <label class="flex items-center justify-between text-slate-300 font-semibold mb-1">
+              <span>Bobot Progres</span>
+              <span id="lbl-lp-prg" class="text-sky-300 font-bold tabular-nums">${lp.progressWeight}%</span>
+            </label>
+            <input id="inp-lp-prg" type="range" min="0" max="100" step="5" value="${lp.progressWeight}" class="w-full accent-sky-400" />
+          </div>
+        </div>
+
+        <!-- Advanced Fine-Tuning Row -->
+        <div class="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+          <div class="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800">
+            <label class="flex items-center justify-between text-slate-300 font-semibold mb-1">
+              <span>Batas Cepat</span>
+              <span id="lbl-lp-fast" class="text-amber-300 font-bold tabular-nums">≤ ${lp.fastThresholdSec} dtk</span>
+            </label>
+            <input id="inp-lp-fast" type="range" min="4" max="45" step="1" value="${lp.fastThresholdSec}" class="w-full accent-amber-400" />
+          </div>
+          <div class="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800">
+            <label class="flex items-center justify-between text-slate-300 font-semibold mb-1">
+              <span>Bonus Streak</span>
+              <span id="lbl-lp-streak" class="text-emerald-300 font-bold tabular-nums">+${lp.streakBonus}</span>
+            </label>
+            <input id="inp-lp-streak" type="range" min="0" max="40" step="2" value="${lp.streakBonus}" class="w-full accent-emerald-400" />
+          </div>
+          <div class="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800">
+            <label class="flex items-center justify-between text-slate-300 font-semibold mb-1">
+              <span>Penalti Salah</span>
+              <span id="lbl-lp-penalty" class="text-rose-300 font-bold tabular-nums">-${lp.wrongPenalty}</span>
+            </label>
+            <input id="inp-lp-penalty" type="range" min="0" max="40" step="2" value="${lp.wrongPenalty}" class="w-full accent-rose-400" />
+          </div>
+          <div class="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800">
+            <label class="block text-slate-300 font-semibold mb-1">Urutan Utama</label>
+            <select id="sel-lp-sort" class="input-dark text-xs py-1 px-2">
+              <option value="composite" ${lp.sortBy === 'composite' ? 'selected' : ''}>Skor Terbobot (Auto)</option>
+              <option value="score" ${lp.sortBy === 'score' ? 'selected' : ''}>Skor Kuis Murni</option>
+              <option value="accuracy" ${lp.sortBy === 'accuracy' ? 'selected' : ''}>Ketepatan (%)</option>
+              <option value="speed" ${lp.sortBy === 'speed' ? 'selected' : ''}>Kecepatan Jawab</option>
+              <option value="progress" ${lp.sortBy === 'progress' ? 'selected' : ''}>Progres ${this.esc(gameMeta.leaderboardMetric)}</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   private renderLeaderboardTab(
     participants: RoomSnapshot['participants'],
     gameMeta: ReturnType<typeof getMinigameMeta>
   ): string {
-    const maxScore = Math.max(100, ...participants.map((p) => p.score));
-    return `
-      <div class="bg-[#111c33] border border-slate-700 rounded-2xl p-5">
-        <div class="flex flex-wrap items-center justify-between gap-3 mb-5 pb-4 border-b border-slate-700">
-          <div>
-            <span class="text-xs font-bold px-2.5 py-1 rounded-md text-slate-950" style="background:${gameMeta.accent}">
-              MINI-GAME #${gameMeta.number} · ${this.esc(gameMeta.badge)}
-            </span>
-            <h2 class="font-display font-bold text-2xl text-white mt-2">
-              Leaderboard Realtime — ${this.esc(gameMeta.name)}
-            </h2>
-            <p class="text-xs text-slate-300 mt-0.5">${this.esc(gameMeta.description)}</p>
-          </div>
-          <div class="flex flex-wrap items-center gap-2.5">
-            <div class="text-right">
-              <div class="text-xs text-slate-400">Metrik Khusus Permainan</div>
-              <div class="font-display font-bold text-lg text-amber-300">${this.esc(gameMeta.leaderboardMetric)} (${this.esc(gameMeta.leaderboardUnit)})</div>
-            </div>
-            <button type="button" class="js-open-analytics px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-emerald-400 hover:brightness-110 text-slate-950 font-bold text-xs cursor-pointer shrink-0">
-              Buka Analitik Kelas
-            </button>
-            <button type="button" class="js-export-excel btn-gold text-xs py-2.5 px-3.5 shrink-0">
-              Ekspor Excel (.xlsx)
-            </button>
-          </div>
-        </div>
+    const lp = normalizeLeaderboardParams(this.leaderboardParams, gameMeta.id);
+    const ranked = rankParticipants(participants, lp, gameMeta.id);
+    const maxComposite = Math.max(100, ...ranked.map((p) => Math.max(p.metrics.compositeScore, p.score)));
 
-        ${
-          participants.length === 0
-            ? `<p class="text-center py-12 text-slate-400">Belum ada skor peserta yang tercatat.</p>`
-            : `<div class="space-y-3">
-                ${participants
-                  .map((p, idx) => {
-                    const pct = Math.min(100, Math.round((p.score / maxScore) * 100));
-                    const total = p.correctCount + p.wrongCount;
-                    const acc = total > 0 ? Math.round((p.correctCount / total) * 100) : 0;
-                    const medal =
-                      idx === 0
-                        ? 'bg-amber-400 text-slate-950'
-                        : idx === 1
-                          ? 'bg-slate-300 text-slate-950'
-                          : idx === 2
-                            ? 'bg-orange-400 text-slate-950'
-                            : 'bg-slate-800 text-slate-200';
-                    return `
-                      <div class="p-4 rounded-xl bg-slate-900/90 border border-slate-700">
-                        <div class="flex flex-wrap items-center justify-between gap-3 mb-2">
-                          <div class="flex items-center gap-3">
-                            <div class="w-9 h-9 rounded-xl font-display font-bold flex items-center justify-center ${medal}">
-                              #${idx + 1}
+    return `
+      <div class="space-y-5">
+        ${this.renderLeaderboardParamsPanel()}
+
+        <div class="bg-[#111c33] border border-slate-700 rounded-2xl p-5">
+          <div class="flex flex-wrap items-center justify-between gap-3 mb-5 pb-4 border-b border-slate-700">
+            <div>
+              <span class="text-xs font-bold px-2.5 py-1 rounded-md text-slate-950" style="background:${gameMeta.accent}">
+                MINI-GAME #${gameMeta.number} · ${this.esc(gameMeta.badge)}
+              </span>
+              <h2 class="font-display font-bold text-2xl text-white mt-2">
+                Leaderboard Realtime — ${this.esc(gameMeta.name)}
+              </h2>
+              <p class="text-xs text-sky-300 mt-0.5 font-semibold">${this.esc(describeLeaderboardFormula(lp))}</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2.5">
+              <div class="text-right">
+                <div class="text-xs text-slate-400">Metrik Khusus Permainan</div>
+                <div class="font-display font-bold text-lg text-amber-300">${this.esc(gameMeta.leaderboardMetric)} (${this.esc(gameMeta.leaderboardUnit)})</div>
+              </div>
+              <button type="button" class="js-open-analytics px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-emerald-400 hover:brightness-110 text-slate-950 font-bold text-xs cursor-pointer shrink-0">
+                Buka Analitik Kelas
+              </button>
+              <button type="button" class="js-export-excel btn-gold text-xs py-2.5 px-3.5 shrink-0">
+                Ekspor Excel (.xlsx)
+              </button>
+            </div>
+          </div>
+
+          ${
+            ranked.length === 0
+              ? `<p class="text-center py-12 text-slate-400">Belum ada skor peserta yang tercatat.</p>`
+              : `<div class="space-y-3">
+                  ${ranked
+                    .map((p, idx) => {
+                      const mainVal = lp.sortBy === 'score' ? p.score : p.metrics.compositeScore;
+                      const pct = Math.min(100, Math.round((mainVal / maxComposite) * 100));
+                      const medal =
+                        idx === 0
+                          ? 'bg-amber-400 text-slate-950'
+                          : idx === 1
+                            ? 'bg-slate-300 text-slate-950'
+                            : idx === 2
+                              ? 'bg-orange-400 text-slate-950'
+                              : 'bg-slate-800 text-slate-200';
+                      return `
+                        <div class="p-4 rounded-xl bg-slate-900/90 border border-slate-700">
+                          <div class="flex flex-wrap items-center justify-between gap-3 mb-2">
+                            <div class="flex items-center gap-3">
+                              <div class="w-9 h-9 rounded-xl font-display font-bold flex items-center justify-center ${medal}">
+                                #${idx + 1}
+                              </div>
+                              <div>
+                                <div class="font-bold text-base text-white">${this.esc(p.nama)} <span class="text-xs font-normal text-sky-300">(Kelas ${this.esc(p.kelas)})</span></div>
+                                <div class="text-xs text-slate-400">
+                                  ${this.esc(p.sekolah)} · Level ${p.level.toUpperCase()} · Akurasi <strong class="text-emerald-300">${p.metrics.accuracyPct}%</strong> · Rata-rata <strong class="text-amber-300">${p.metrics.avgResponseSec > 0 ? `${p.metrics.avgResponseSec}d` : '-'}</strong> · Streak ${p.streak}x
+                                </div>
+                              </div>
                             </div>
-                            <div>
-                              <div class="font-bold text-base text-white">${this.esc(p.nama)} <span class="text-xs font-normal text-sky-300">(Kelas ${this.esc(p.kelas)})</span></div>
-                              <div class="text-xs text-slate-400">${this.esc(p.sekolah)} · Level ${p.level.toUpperCase()} · Akurasi ${acc}% · Streak ${p.streak}x</div>
+                            <div class="flex items-center gap-4">
+                              <div class="text-right">
+                                <div class="text-[11px] text-slate-400">${this.esc(gameMeta.leaderboardMetric)}</div>
+                                <div class="font-bold text-sky-300 tabular-nums">${p.progressValue} ${this.esc(gameMeta.leaderboardUnit)}</div>
+                              </div>
+                              <div class="text-right">
+                                <div class="text-[11px] text-slate-400">Skor Kuis</div>
+                                <div class="font-bold text-slate-200 tabular-nums">${p.score}</div>
+                              </div>
+                              <div class="text-right">
+                                <div class="text-[11px] text-slate-400">${lp.sortBy === 'score' ? 'Skor Utama' : 'Skor Terbobot'}</div>
+                                <div class="font-display font-bold text-xl text-amber-300 tabular-nums">${mainVal}</div>
+                              </div>
                             </div>
                           </div>
-                          <div class="flex items-center gap-4">
-                            <div class="text-right">
-                              <div class="text-[11px] text-slate-400">${this.esc(gameMeta.leaderboardMetric)}</div>
-                              <div class="font-bold text-sky-300 tabular-nums">${p.progressValue} ${this.esc(gameMeta.leaderboardUnit)}</div>
-                            </div>
-                            <div class="text-right">
-                              <div class="text-[11px] text-slate-400">Total Skor</div>
-                              <div class="font-display font-bold text-xl text-amber-300 tabular-nums">${p.score}</div>
-                            </div>
+                          <div class="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden">
+                            <div class="h-full rounded-full transition-all duration-300" style="width:${Math.max(4, pct)}%; background:${gameMeta.accent}"></div>
                           </div>
-                        </div>
-                        <div class="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden">
-                          <div class="h-full rounded-full transition-all duration-300" style="width:${Math.max(4, pct)}%; background:${gameMeta.accent}"></div>
-                        </div>
-                      </div>`;
-                  })
-                  .join('')}
-              </div>`
-        }
+                        </div>`;
+                    })
+                    .join('')}
+                </div>`
+          }
+        </div>
       </div>
     `;
   }
@@ -1239,11 +1845,104 @@ export class TeacherUI {
     main.querySelectorAll<HTMLButtonElement>('.js-game-pick').forEach((btn) => {
       btn.addEventListener('click', () => {
         soundFX.playClick();
-        this.selectedGameId = btn.dataset.game as GameId;
+        const nextGame = btn.dataset.game as GameId;
+        this.selectedGameId = nextGame;
+        this.leaderboardParams = getDefaultLeaderboardParams(nextGame);
         this.pushMissionConfig();
         this.renderNav();
         this.renderMainContent();
+        const gm = getMinigameMeta(nextGame);
+        this.onToast(
+          `Mini-game "${gm.name}" dipilih · Parameter leaderboard otomatis disesuaikan!`
+        );
       });
+    });
+
+    // Realtime Leaderboard Parameter Presets & Sliders
+    main.querySelector('#btn-reset-lp-default')?.addEventListener('click', () => {
+      soundFX.playClick();
+      this.leaderboardParams = getDefaultLeaderboardParams(this.selectedGameId);
+      this.pushMissionConfig();
+      this.renderMainContent();
+      this.onToast('Parameter leaderboard dikembalikan ke rekomendasi default mini-game.');
+    });
+
+    main.querySelectorAll<HTMLButtonElement>('.js-lp-preset').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const key = btn.dataset.lpPreset as Exclude<LeaderboardPresetId, 'custom'>;
+        const preset = LEADERBOARD_PRESETS[key];
+        if (!preset) return;
+        soundFX.playClick();
+        this.leaderboardParams = { ...preset.params };
+        this.pushMissionConfig();
+        this.renderMainContent();
+        this.onToast(`Mode leaderboard diubah ke "${preset.label}" secara realtime!`);
+      });
+    });
+
+    const bindRangeParam = (
+      inputSel: string,
+      labelSel: string,
+      format: (v: number) => string,
+      assign: (v: number) => void
+    ) => {
+      const inp = main.querySelector<HTMLInputElement>(inputSel);
+      const lbl = main.querySelector<HTMLElement>(labelSel);
+      inp?.addEventListener('input', () => {
+        const val = Number(inp.value);
+        assign(val);
+        this.leaderboardParams.preset = 'custom';
+        if (lbl) lbl.textContent = format(val);
+      });
+      inp?.addEventListener('change', () => {
+        this.pushMissionConfig();
+        this.renderMainContent();
+      });
+    };
+
+    bindRangeParam(
+      '#inp-lp-acc',
+      '#lbl-lp-acc',
+      (v) => `${v}%`,
+      (v) => (this.leaderboardParams.accuracyWeight = v)
+    );
+    bindRangeParam(
+      '#inp-lp-spd',
+      '#lbl-lp-spd',
+      (v) => `${v}%`,
+      (v) => (this.leaderboardParams.speedWeight = v)
+    );
+    bindRangeParam(
+      '#inp-lp-prg',
+      '#lbl-lp-prg',
+      (v) => `${v}%`,
+      (v) => (this.leaderboardParams.progressWeight = v)
+    );
+    bindRangeParam(
+      '#inp-lp-fast',
+      '#lbl-lp-fast',
+      (v) => `≤ ${v} dtk`,
+      (v) => (this.leaderboardParams.fastThresholdSec = v)
+    );
+    bindRangeParam(
+      '#inp-lp-streak',
+      '#lbl-lp-streak',
+      (v) => `+${v}`,
+      (v) => (this.leaderboardParams.streakBonus = v)
+    );
+    bindRangeParam(
+      '#inp-lp-penalty',
+      '#lbl-lp-penalty',
+      (v) => `-${v}`,
+      (v) => (this.leaderboardParams.wrongPenalty = v)
+    );
+
+    const sortSel = main.querySelector<HTMLSelectElement>('#sel-lp-sort');
+    sortSel?.addEventListener('change', () => {
+      soundFX.playClick();
+      this.leaderboardParams.sortBy = sortSel.value as LeaderboardSortBy;
+      this.pushMissionConfig();
+      this.renderMainContent();
     });
 
     const qDur = main.querySelector<HTMLInputElement>('#inp-qdur');
@@ -1263,7 +1962,7 @@ export class TeacherUI {
     main.querySelector('#btn-save-config')?.addEventListener('click', () => {
       soundFX.playClick();
       this.pushMissionConfig();
-      this.onToast('Pengaturan misi berhasil diperbarui ke semua peserta.');
+      this.onToast('Pengaturan misi & parameter leaderboard diperbarui ke semua peserta.');
     });
 
     main.querySelector('#btn-start-mission')?.addEventListener('click', () => {
@@ -1273,6 +1972,7 @@ export class TeacherUI {
         gameId: this.selectedGameId,
         questionDurationSec: this.questionDurationSec,
         gameDurationMin: this.gameDurationMin,
+        leaderboardParams: { ...this.leaderboardParams },
       });
       this.onToast('Misi dimulai! Seluruh peserta online disetujui masuk ke arena 3D.');
     });
@@ -1426,6 +2126,7 @@ export class TeacherUI {
       gameId: this.selectedGameId,
       questionDurationSec: this.questionDurationSec,
       gameDurationMin: this.gameDurationMin,
+      leaderboardParams: { ...this.leaderboardParams },
     });
   }
 

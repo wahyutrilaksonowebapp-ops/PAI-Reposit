@@ -1,0 +1,512 @@
+{
+  "entities": {
+    "ActiveRoomPointer": {
+      "title": "ActiveRoomPointer",
+      "description": "Points to the currently active classroom room code for default discovery.",
+      "type": "object",
+      "properties": {
+        "activeRoomCode": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 12,
+          "pattern": "^[A-Z0-9\\-]+$"
+        },
+        "sekolah": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "updatedAt": {
+          "type": "number"
+        }
+      },
+      "required": ["activeRoomCode", "updatedAt"]
+    },
+    "Room": {
+      "title": "Room",
+      "description": "Authoritative PAI Nusantara 3D classroom session configuration, active mission, leaderboard parameters, and chat moderation state.",
+      "type": "object",
+      "properties": {
+        "roomCode": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 12,
+          "pattern": "^[A-Z0-9\\-]+$"
+        },
+        "sekolah": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "mission": {
+          "type": "object",
+          "description": "Current mission configuration including gameId, elementIds, timers, status, and leaderboardParams."
+        },
+        "chatMutedAll": {
+          "type": "boolean"
+        },
+        "mutedParticipantIds": {
+          "type": "array",
+          "description": "Bounded list of muted student participant IDs (max 100)."
+        },
+        "teacherUid": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "updatedAt": {
+          "type": "number"
+        }
+      },
+      "required": ["roomCode", "mission", "chatMutedAll", "mutedParticipantIds", "updatedAt"]
+    },
+    "Participant": {
+      "title": "Participant",
+      "description": "A student participating in a classroom session with avatar, realtime 3D position, quiz score, progress, and online heartbeat.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 80,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "roomCode": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 12,
+          "pattern": "^[A-Z0-9\\-]+$"
+        },
+        "nama": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "kelas": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16
+        },
+        "sekolah": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "avatar": {
+          "type": "object"
+        },
+        "score": {
+          "type": "number"
+        },
+        "rank": {
+          "type": "number"
+        },
+        "level": {
+          "type": "string",
+          "enum": ["mudah", "sedang", "sulit"]
+        },
+        "streak": {
+          "type": "number"
+        },
+        "maxStreak": {
+          "type": "number"
+        },
+        "wrongStreak": {
+          "type": "number"
+        },
+        "correctCount": {
+          "type": "number"
+        },
+        "wrongCount": {
+          "type": "number"
+        },
+        "activeBuff": {
+          "type": "string",
+          "enum": ["none", "double_risk", "boost_1_5"]
+        },
+        "progressValue": {
+          "type": "number"
+        },
+        "progressLabel": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "pos": {
+          "type": "object"
+        },
+        "rotY": {
+          "type": "number"
+        },
+        "activity": {
+          "type": "string",
+          "enum": ["avatar", "schoolyard", "playing", "finished"]
+        },
+        "isReady": {
+          "type": "boolean"
+        },
+        "approvedForMission": {
+          "type": "boolean"
+        },
+        "connected": {
+          "type": "boolean"
+        },
+        "finishedReflection": {
+          "type": "boolean"
+        },
+        "answeredLog": {
+          "type": "array"
+        },
+        "joinedAt": {
+          "type": "number"
+        },
+        "lastSeenAt": {
+          "type": "number"
+        },
+        "typingAt": {
+          "type": "number"
+        },
+        "lastSabotagedBy": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "lastSabotageAmount": {
+          "type": "number"
+        },
+        "lastSabotageAt": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "roomCode",
+        "nama",
+        "kelas",
+        "sekolah",
+        "avatar",
+        "score",
+        "level",
+        "activity",
+        "connected",
+        "joinedAt",
+        "lastSeenAt"
+      ]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Moderated live forum chat message between teacher and students inside a classroom room.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 80,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "roomCode": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 12,
+          "pattern": "^[A-Z0-9\\-]+$"
+        },
+        "senderId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "senderName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "senderRole": {
+          "type": "string",
+          "enum": ["teacher", "student"]
+        },
+        "senderKelas": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 280
+        },
+        "createdAt": {
+          "type": "number"
+        },
+        "pinned": {
+          "type": "boolean"
+        },
+        "deleted": {
+          "type": "boolean"
+        }
+      },
+      "required": ["id", "roomCode", "senderId", "senderName", "senderRole", "text", "createdAt"]
+    },
+    "TeacherAlert": {
+      "title": "TeacherAlert",
+      "description": "Realtime notification event for teachers when a student acts off-mission or chat needs moderation.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 80,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "roomCode": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 12,
+          "pattern": "^[A-Z0-9\\-]+$"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "off_mission_tab_switch",
+            "off_mission_wrong_screen",
+            "off_mission_idle",
+            "chat_moderation_blocked",
+            "chat_moderation_caps",
+            "chat_moderation_spam"
+          ]
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["warning", "danger"]
+        },
+        "participantId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "participantName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "participantKelas": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "detail": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 280
+        },
+        "chatText": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "createdAt": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "roomCode",
+        "kind",
+        "severity",
+        "participantId",
+        "participantName",
+        "detail",
+        "createdAt"
+      ]
+    },
+    "Testimonial": {
+      "title": "Testimonial",
+      "description": "Permanent student reflection and testimonial displayed on the login marquee and teacher reports.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 80,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "visibility": {
+          "type": "string",
+          "enum": ["classroom"]
+        },
+        "nama": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "kelas": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "sekolah": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "refleksi": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400
+        },
+        "komentar": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "kritikSaran": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "gameName": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "skor": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "number"
+        }
+      },
+      "required": ["id", "visibility", "nama", "kelas", "sekolah", "refleksi", "gameName", "skor", "createdAt"]
+    },
+    "CustomElement": {
+      "title": "CustomElement",
+      "description": "Teacher-authored custom PAI learning element and study kiosk material.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 80,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "visibility": {
+          "type": "string",
+          "enum": ["classroom"]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "shortName": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "color": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "accentHex": {
+          "type": "number"
+        },
+        "materialTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "subtitle": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "sections": {
+          "type": "array"
+        },
+        "isCustom": {
+          "type": "boolean"
+        }
+      },
+      "required": ["id", "visibility", "name", "shortName", "color", "accentHex", "materialTitle", "sections"]
+    },
+    "CustomQuestion": {
+      "title": "CustomQuestion",
+      "description": "Teacher-authored custom AKM question item added to the classroom question bank.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 80,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "visibility": {
+          "type": "string",
+          "enum": ["classroom"]
+        },
+        "elementId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "difficulty": {
+          "type": "string",
+          "enum": ["mudah", "sedang", "sulit"]
+        },
+        "cognitiveLevel": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "type": {
+          "type": "string",
+          "enum": ["PG", "PGK", "BS"]
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600
+        },
+        "options": {
+          "type": "array"
+        },
+        "correctIndices": {
+          "type": "array"
+        },
+        "explanation": {
+          "type": "string",
+          "maxLength": 400
+        }
+      },
+      "required": [
+        "id",
+        "visibility",
+        "elementId",
+        "difficulty",
+        "cognitiveLevel",
+        "type",
+        "prompt",
+        "options",
+        "correctIndices",
+        "explanation"
+      ]
+    }
+  },
+  "firestore": {
+    "/meta/activeRoom": {
+      "schema": { "$ref": "#/entities/ActiveRoomPointer" },
+      "description": "Global pointer storing the active classroom roomCode for default session discovery."
+    },
+    "/rooms/{roomCode}": {
+      "schema": { "$ref": "#/entities/Room" },
+      "description": "Live classroom state document keyed by uppercase Enter Code (roomCode)."
+    },
+    "/rooms/{roomCode}/participants/{participantId}": {
+      "schema": { "$ref": "#/entities/Participant" },
+      "description": "Subcollection of students joined in the room with realtime heartbeat, position, and scores."
+    },
+    "/rooms/{roomCode}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/ChatMessage" },
+      "description": "Subcollection of moderated live forum chat messages for the room."
+    },
+    "/rooms/{roomCode}/alerts/{alertId}": {
+      "schema": { "$ref": "#/entities/TeacherAlert" },
+      "description": "Subcollection of teacher alert notifications for off-mission activity and chat moderation."
+    },
+    "/testimonials/{testimonialId}": {
+      "schema": { "$ref": "#/entities/Testimonial" },
+      "description": "Permanent student reflections and testimonials."
+    },
+    "/customElements/{elementId}": {
+      "schema": { "$ref": "#/entities/CustomElement" },
+      "description": "Teacher-created custom PAI study elements."
+    },
+    "/customQuestions/{questionId}": {
+      "schema": { "$ref": "#/entities/CustomQuestion" },
+      "description": "Teacher-created custom AKM questions."
+    }
+  }
+}

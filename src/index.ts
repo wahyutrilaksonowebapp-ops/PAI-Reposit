@@ -198,6 +198,12 @@ async function bootstrap(): Promise<void> {
     }
   });
 
+  realtimeClient.on('teacherAlert', ({ alert, snapshot }) => {
+    if (activeRole === 'teacher') {
+      teacherUI.handleTeacherAlert(alert, snapshot);
+    }
+  });
+
   // Initial state, reload session restoration & live WebSocket connection
   const initial = await realtimeClient.fetchInitialState();
   const saved = loadSession();

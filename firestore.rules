@@ -1,0 +1,683 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // -------------------------------------------------------------------------
+    // Global Safety Net (Default Deny)
+    // -------------------------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Global Primitives & Validation Helpers
+    // -------------------------------------------------------------------------
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn()
+        && request.auth.token.email == 'wahyutrilaksonowebapp@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string
+        && id.size() >= 2
+        && id.size() <= 80
+        && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidRoomCode(code) {
+      return code is string
+        && code.size() >= 3
+        && code.size() <= 12
+        && code.matches('^[A-Z0-9\\-]+$');
+    }
+
+    function isNonEmptyString(val, maxLen) {
+      return val is string && val.size() >= 1 && val.size() <= maxLen;
+    }
+
+    function isOptionalString(data, key, maxLen) {
+      return !(key in data) || (data[key] is string && data[key].size() <= maxLen);
+    }
+
+    function isOptionalNumber(data, key, minVal, maxVal) {
+      return !(key in data) || (data[key] is number && data[key] >= minVal && data[key] <= maxVal);
+    }
+
+    function isOptionalBool(data, key) {
+      return !(key in data) || data[key] is bool;
+    }
+
+    function parentRoomExists(roomCode) {
+      return exists(/databases/$(database)/documents/rooms/$(roomCode));
+    }
+
+    // -------------------------------------------------------------------------
+    // Entity Blueprints (Validation Helpers)
+    // -------------------------------------------------------------------------
+    function isValidActiveRoomPointer(data) {
+      return data.keys().hasAll(['activeRoomCode', 'updatedAt'])
+        && data.keys().hasOnly(['activeRoomCode', 'sekolah', 'updatedAt'])
+        && isValidRoomCode(data.activeRoomCode)
+        && isOptionalString(data, 'sekolah', 120)
+        && data.updatedAt is number
+        && data.updatedAt > 0;
+    }
+
+    function isValidLeaderboardParams(lp) {
+      return lp is map
+        && lp.keys().hasAll([
+          'preset',
+          'sortBy',
+          'accuracyWeight',
+          'speedWeight',
+          'progressWeight',
+          'streakBonus',
+          'wrongPenalty',
+          'fastThresholdSec'
+        ])
+        && lp.keys().hasOnly([
+          'preset',
+          'sortBy',
+          'accuracyWeight',
+          'speedWeight',
+          'progressWeight',
+          'streakBonus',
+          'wrongPenalty',
+          'fastThresholdSec'
+        ])
+        && lp.preset in ['balanced', 'speed_rush', 'accuracy_master', 'progress_climb', 'custom']
+        && lp.sortBy in ['composite', 'score', 'accuracy', 'speed', 'progress']
+        && lp.accuracyWeight is number && lp.accuracyWeight >= 0 && lp.accuracyWeight <= 100
+        && lp.speedWeight is number && lp.speedWeight >= 0 && lp.speedWeight <= 100
+        && lp.progressWeight is number && lp.progressWeight >= 0 && lp.progressWeight <= 100
+        && lp.streakBonus is number && lp.streakBonus >= 0 && lp.streakBonus <= 50
+        && lp.wrongPenalty is number && lp.wrongPenalty >= 0 && lp.wrongPenalty <= 50
+        && lp.fastThresholdSec is number && lp.fastThresholdSec >= 3 && lp.fastThresholdSec <= 60;
+    }
+
+    function isValidMission(m) {
+      return m is map
+        && m.keys().hasAll([
+          'active',
+          'status',
+          'elementIds',
+          'gameId',
+          'questionDurationSec',
+          'gameDurationMin',
+          'startedAt',
+          'endsAt'
+        ])
+        && m.keys().hasOnly([
+          'active',
+          'status',
+          'elementIds',
+          'gameId',
+          'questionDurationSec',
+          'gameDurationMin',
+          'startedAt',
+          'endsAt',
+          'leaderboardParams'
+        ])
+        && m.active is bool
+        && m.status in ['lobby', 'playing', 'finished']
+        && m.elementIds is list
+        && m.elementIds.size() >= 1
+        && m.elementIds.size() <= 20
+        && m.elementIds[0] is string
+        && m.gameId in [
+          'puncak_nalar',
+          'sky_bridge',
+          'grand_prix',
+          'lost_scroll',
+          'edu_craft',
+          'portal_dimension',
+          'board_adventure',
+          'astro_scanner',
+          'climb_summit'
+        ]
+        && m.questionDurationSec is number && m.questionDurationSec >= 5 && m.questionDurationSec <= 180
+        && m.gameDurationMin is number && m.gameDurationMin >= 1 && m.gameDurationMin <= 120
+        && (m.startedAt == null || m.startedAt is number)
+        && (m.endsAt == null || m.endsAt is number)
+        && (!('leaderboardParams' in m) || isValidLeaderboardParams(m.leaderboardParams));
+    }
+
+    function isValidRoom(data, roomCode) {
+      return data.keys().hasAll(['roomCode', 'mission', 'chatMutedAll', 'mutedParticipantIds', 'updatedAt'])
+        && data.keys().hasOnly([
+          'roomCode',
+          'sekolah',
+          'mission',
+          'chatMutedAll',
+          'mutedParticipantIds',
+          'teacherUid',
+          'updatedAt'
+        ])
+        && data.roomCode == roomCode
+        && isValidRoomCode(data.roomCode)
+        && isOptionalString(data, 'sekolah', 120)
+        && isValidMission(data.mission)
+        && data.chatMutedAll is bool
+        && data.mutedParticipantIds is list
+        && data.mutedParticipantIds.size() <= 100
+        && (data.mutedParticipantIds.size() == 0 || data.mutedParticipantIds[0] is string)
+        && isOptionalString(data, 'teacherUid', 128)
+        && data.updatedAt is number
+        && data.updatedAt > 0;
+    }
+
+    function isValidPos(pos) {
+      return pos is map
+        && pos.keys().hasAll(['x', 'y', 'z'])
+        && pos.keys().hasOnly(['x', 'y', 'z'])
+        && pos.x is number && pos.x >= -500 && pos.x <= 500
+        && pos.y is number && pos.y >= -100 && pos.y <= 500
+        && pos.z is number && pos.z >= -500 && pos.z <= 500;
+    }
+
+    function isValidParticipant(data, roomCode, participantId) {
+      return data.keys().hasAll([
+          'id',
+          'roomCode',
+          'nama',
+          'kelas',
+          'sekolah',
+          'avatar',
+          'score',
+          'level',
+          'activity',
+          'connected',
+          'joinedAt',
+          'lastSeenAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'roomCode',
+          'nama',
+          'kelas',
+          'sekolah',
+          'avatar',
+          'score',
+          'rank',
+          'level',
+          'streak',
+          'maxStreak',
+          'wrongStreak',
+          'correctCount',
+          'wrongCount',
+          'activeBuff',
+          'progressValue',
+          'progressLabel',
+          'pos',
+          'rotY',
+          'activity',
+          'isReady',
+          'approvedForMission',
+          'connected',
+          'finishedReflection',
+          'answeredLog',
+          'joinedAt',
+          'lastSeenAt',
+          'typingAt',
+          'lastSabotagedBy',
+          'lastSabotageAmount',
+          'lastSabotageAt'
+        ])
+        && data.id == participantId
+        && isValidId(data.id)
+        && data.roomCode == roomCode
+        && isValidRoomCode(data.roomCode)
+        && isNonEmptyString(data.nama, 64)
+        && isNonEmptyString(data.kelas, 16)
+        && isNonEmptyString(data.sekolah, 120)
+        && data.avatar is map
+        && data.score is number && data.score >= 0 && data.score <= 1000000
+        && isOptionalNumber(data, 'rank', 0, 10000)
+        && data.level in ['mudah', 'sedang', 'sulit']
+        && isOptionalNumber(data, 'streak', 0, 10000)
+        && isOptionalNumber(data, 'maxStreak', 0, 10000)
+        && isOptionalNumber(data, 'wrongStreak', 0, 10000)
+        && isOptionalNumber(data, 'correctCount', 0, 10000)
+        && isOptionalNumber(data, 'wrongCount', 0, 10000)
+        && (!('activeBuff' in data) || data.activeBuff in ['none', 'double_risk', 'boost_1_5'])
+        && isOptionalNumber(data, 'progressValue', 0, 1000000)
+        && isOptionalString(data, 'progressLabel', 40)
+        && (!('pos' in data) || isValidPos(data.pos))
+        && isOptionalNumber(data, 'rotY', -100, 100)
+        && data.activity in ['avatar', 'schoolyard', 'playing', 'finished']
+        && isOptionalBool(data, 'isReady')
+        && isOptionalBool(data, 'approvedForMission')
+        && data.connected is bool
+        && isOptionalBool(data, 'finishedReflection')
+        && (!('answeredLog' in data) || (data.answeredLog is list && data.answeredLog.size() <= 200))
+        && data.joinedAt is number && data.joinedAt > 0
+        && data.lastSeenAt is number && data.lastSeenAt > 0
+        && isOptionalNumber(data, 'typingAt', 0, 9999999999999)
+        && isOptionalString(data, 'lastSabotagedBy', 64)
+        && isOptionalNumber(data, 'lastSabotageAmount', 0, 1000)
+        && isOptionalNumber(data, 'lastSabotageAt', 0, 9999999999999);
+    }
+
+    function isValidChatMessage(data, roomCode, messageId) {
+      return data.keys().hasAll([
+          'id',
+          'roomCode',
+          'senderId',
+          'senderName',
+          'senderRole',
+          'text',
+          'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'roomCode',
+          'senderId',
+          'senderName',
+          'senderRole',
+          'senderKelas',
+          'text',
+          'createdAt',
+          'pinned',
+          'deleted'
+        ])
+        && data.id == messageId
+        && isValidId(data.id)
+        && data.roomCode == roomCode
+        && isValidRoomCode(data.roomCode)
+        && isNonEmptyString(data.senderId, 80)
+        && isNonEmptyString(data.senderName, 80)
+        && data.senderRole in ['teacher', 'student']
+        && isOptionalString(data, 'senderKelas', 16)
+        && isNonEmptyString(data.text, 280)
+        && data.createdAt is number && data.createdAt > 0
+        && isOptionalBool(data, 'pinned')
+        && isOptionalBool(data, 'deleted');
+    }
+
+    function isValidTeacherAlert(data, roomCode, alertId) {
+      return data.keys().hasAll([
+          'id',
+          'roomCode',
+          'kind',
+          'severity',
+          'participantId',
+          'participantName',
+          'detail',
+          'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'roomCode',
+          'kind',
+          'severity',
+          'participantId',
+          'participantName',
+          'participantKelas',
+          'detail',
+          'chatText',
+          'createdAt'
+        ])
+        && data.id == alertId
+        && isValidId(data.id)
+        && data.roomCode == roomCode
+        && isValidRoomCode(data.roomCode)
+        && data.kind in [
+          'off_mission_tab_switch',
+          'off_mission_wrong_screen',
+          'off_mission_idle',
+          'chat_moderation_blocked',
+          'chat_moderation_caps',
+          'chat_moderation_spam'
+        ]
+        && data.severity in ['warning', 'danger']
+        && isNonEmptyString(data.participantId, 80)
+        && isNonEmptyString(data.participantName, 80)
+        && isOptionalString(data, 'participantKelas', 16)
+        && isNonEmptyString(data.detail, 280)
+        && isOptionalString(data, 'chatText', 200)
+        && data.createdAt is number && data.createdAt > 0;
+    }
+
+    function isValidTestimonial(data, testimonialId) {
+      return data.keys().hasAll([
+          'id',
+          'visibility',
+          'nama',
+          'kelas',
+          'sekolah',
+          'refleksi',
+          'gameName',
+          'skor',
+          'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'visibility',
+          'nama',
+          'kelas',
+          'sekolah',
+          'refleksi',
+          'komentar',
+          'kritikSaran',
+          'gameName',
+          'skor',
+          'createdAt'
+        ])
+        && data.id == testimonialId
+        && isValidId(data.id)
+        && data.visibility == 'classroom'
+        && isNonEmptyString(data.nama, 64)
+        && isOptionalString(data, 'kelas', 16)
+        && isOptionalString(data, 'sekolah', 120)
+        && isNonEmptyString(data.refleksi, 400)
+        && isOptionalString(data, 'komentar', 300)
+        && isOptionalString(data, 'kritikSaran', 300)
+        && isNonEmptyString(data.gameName, 80)
+        && data.skor is number && data.skor >= 0 && data.skor <= 1000000
+        && data.createdAt is number && data.createdAt > 0;
+    }
+
+    function isValidCustomElement(data, elementId) {
+      return data.keys().hasAll([
+          'id',
+          'visibility',
+          'name',
+          'shortName',
+          'color',
+          'accentHex',
+          'materialTitle',
+          'sections'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'visibility',
+          'name',
+          'shortName',
+          'color',
+          'accentHex',
+          'materialTitle',
+          'subtitle',
+          'sections',
+          'isCustom'
+        ])
+        && data.id == elementId
+        && isValidId(data.id)
+        && data.visibility == 'classroom'
+        && isNonEmptyString(data.name, 100)
+        && isNonEmptyString(data.shortName, 40)
+        && isNonEmptyString(data.color, 20)
+        && data.accentHex is number && data.accentHex >= 0 && data.accentHex <= 16777215
+        && isNonEmptyString(data.materialTitle, 160)
+        && isOptionalString(data, 'subtitle', 200)
+        && data.sections is list && data.sections.size() >= 1 && data.sections.size() <= 15
+        && isOptionalBool(data, 'isCustom');
+    }
+
+    function isValidCustomQuestion(data, questionId) {
+      return data.keys().hasAll([
+          'id',
+          'visibility',
+          'elementId',
+          'difficulty',
+          'cognitiveLevel',
+          'type',
+          'prompt',
+          'options',
+          'correctIndices',
+          'explanation'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'visibility',
+          'elementId',
+          'difficulty',
+          'cognitiveLevel',
+          'type',
+          'prompt',
+          'options',
+          'correctIndices',
+          'explanation'
+        ])
+        && data.id == questionId
+        && isValidId(data.id)
+        && data.visibility == 'classroom'
+        && isNonEmptyString(data.elementId, 80)
+        && data.difficulty in ['mudah', 'sedang', 'sulit']
+        && isNonEmptyString(data.cognitiveLevel, 60)
+        && data.type in ['PG', 'PGK', 'BS']
+        && isNonEmptyString(data.prompt, 600)
+        && data.options is list && data.options.size() >= 2 && data.options.size() <= 6
+        && data.options[0] is string
+        && data.correctIndices is list && data.correctIndices.size() >= 1 && data.correctIndices.size() <= 6
+        && data.correctIndices[0] is number
+        && isNonEmptyString(data.explanation, 400);
+    }
+
+    // -------------------------------------------------------------------------
+    // Collection Rules
+    // -------------------------------------------------------------------------
+
+    // Startup connectivity check document (read-only)
+    match /test/{docId} {
+      allow get: if docId == 'connection';
+      allow list, create, update, delete: if false;
+    }
+
+    function roomUpdateAllowed(changed) {
+      return isAdmin()
+        || changed.hasOnly(['mission', 'chatMutedAll', 'mutedParticipantIds', 'sekolah', 'teacherUid', 'updatedAt']);
+    }
+
+    function participantUpdateAllowed(changed) {
+      return isAdmin()
+        || changed.hasOnly(['connected', 'lastSeenAt', 'typingAt'])
+        || changed.hasOnly(['nama', 'kelas', 'sekolah', 'avatar', 'activity', 'connected', 'lastSeenAt'])
+        || changed.hasOnly(['pos', 'rotY', 'activity', 'isReady', 'connected', 'lastSeenAt'])
+        || changed.hasOnly([
+          'score',
+          'rank',
+          'level',
+          'streak',
+          'maxStreak',
+          'wrongStreak',
+          'correctCount',
+          'wrongCount',
+          'activeBuff',
+          'progressValue',
+          'progressLabel',
+          'answeredLog',
+          'activity',
+          'lastSeenAt'
+        ])
+        || changed.hasOnly(['score', 'lastSabotagedBy', 'lastSabotageAmount', 'lastSabotageAt'])
+        || changed.hasOnly([
+          'score',
+          'rank',
+          'level',
+          'streak',
+          'maxStreak',
+          'wrongStreak',
+          'correctCount',
+          'wrongCount',
+          'activeBuff',
+          'progressValue',
+          'progressLabel',
+          'answeredLog',
+          'finishedReflection',
+          'approvedForMission',
+          'activity',
+          'isReady',
+          'lastSeenAt'
+        ]);
+    }
+
+    // Active classroom room pointer
+    match /meta/{metaId} {
+      allow get: if metaId == 'activeRoom';
+      allow list: if false;
+      allow create: if metaId == 'activeRoom'
+        && isValidActiveRoomPointer(incoming());
+      allow update: if metaId == 'activeRoom'
+        && isValidActiveRoomPointer(incoming())
+        && (
+          isAdmin()
+          || incoming().diff(existing()).affectedKeys().hasOnly(['activeRoomCode', 'sekolah', 'updatedAt'])
+        );
+      allow delete: if false;
+    }
+
+    // Classroom rooms (isolated by Enter Code; listing all rooms is forbidden)
+    match /rooms/{roomCode} {
+      allow get: if isValidRoomCode(roomCode);
+      allow list: if false;
+      allow create: if isValidRoomCode(roomCode)
+        && isValidRoom(incoming(), roomCode);
+      allow update: if isValidRoomCode(roomCode)
+        && isValidRoom(incoming(), roomCode)
+        && incoming().roomCode == existing().roomCode
+        && roomUpdateAllowed(incoming().diff(existing()).affectedKeys());
+      allow delete: if isValidRoomCode(roomCode) && isAdmin();
+
+      // Participants inside a classroom room
+      match /participants/{participantId} {
+        allow get: if isValidRoomCode(roomCode) && isValidId(participantId);
+        allow list: if isValidRoomCode(roomCode)
+          && resource.data.roomCode == roomCode;
+        allow create: if isValidRoomCode(roomCode)
+          && isValidId(participantId)
+          && isValidParticipant(incoming(), roomCode, participantId)
+          && parentRoomExists(roomCode);
+        allow update: if isValidRoomCode(roomCode)
+          && isValidId(participantId)
+          && isValidParticipant(incoming(), roomCode, participantId)
+          && incoming().id == existing().id
+          && incoming().roomCode == existing().roomCode
+          && incoming().joinedAt == existing().joinedAt
+          && parentRoomExists(roomCode)
+          && participantUpdateAllowed(incoming().diff(existing()).affectedKeys());
+        allow delete: if isValidRoomCode(roomCode)
+          && isValidId(participantId)
+          && parentRoomExists(roomCode);
+      }
+
+      // Live forum chat messages inside a classroom room
+      match /messages/{messageId} {
+        allow get: if isValidRoomCode(roomCode) && isValidId(messageId);
+        allow list: if isValidRoomCode(roomCode)
+          && resource.data.roomCode == roomCode;
+        allow create: if isValidRoomCode(roomCode)
+          && isValidId(messageId)
+          && isValidChatMessage(incoming(), roomCode, messageId)
+          && parentRoomExists(roomCode);
+        allow update: if isValidRoomCode(roomCode)
+          && isValidId(messageId)
+          && isValidChatMessage(incoming(), roomCode, messageId)
+          && incoming().id == existing().id
+          && incoming().roomCode == existing().roomCode
+          && incoming().senderId == existing().senderId
+          && incoming().senderRole == existing().senderRole
+          && incoming().text == existing().text
+          && incoming().createdAt == existing().createdAt
+          && parentRoomExists(roomCode)
+          && (
+            isAdmin()
+            || incoming().diff(existing()).affectedKeys().hasOnly(['pinned', 'deleted'])
+          );
+        allow delete: if isValidRoomCode(roomCode)
+          && isValidId(messageId)
+          && parentRoomExists(roomCode);
+      }
+
+      // Teacher moderation & off-mission toast alerts
+      match /alerts/{alertId} {
+        allow get: if isValidRoomCode(roomCode) && isValidId(alertId);
+        allow list: if isValidRoomCode(roomCode)
+          && resource.data.roomCode == roomCode;
+        allow create: if isValidRoomCode(roomCode)
+          && isValidId(alertId)
+          && isValidTeacherAlert(incoming(), roomCode, alertId)
+          && parentRoomExists(roomCode);
+        allow update: if false;
+        allow delete: if isValidRoomCode(roomCode)
+          && isValidId(alertId)
+          && parentRoomExists(roomCode);
+      }
+    }
+
+    // Permanent student reflections & testimonials
+    match /testimonials/{testimonialId} {
+      allow get: if isValidId(testimonialId);
+      allow list: if resource.data.visibility == 'classroom';
+      allow create: if isValidId(testimonialId)
+        && isValidTestimonial(incoming(), testimonialId);
+      allow update: if false;
+      allow delete: if isValidId(testimonialId) && isAdmin();
+    }
+
+    // Teacher custom PAI study elements
+    match /customElements/{elementId} {
+      allow get: if isValidId(elementId);
+      allow list: if resource.data.visibility == 'classroom';
+      allow create: if isValidId(elementId)
+        && isValidCustomElement(incoming(), elementId);
+      allow update: if isValidId(elementId)
+        && isValidCustomElement(incoming(), elementId)
+        && incoming().id == existing().id
+        && incoming().visibility == existing().visibility
+        && (
+          isAdmin()
+          || incoming().diff(existing()).affectedKeys().hasOnly([
+            'name',
+            'shortName',
+            'color',
+            'accentHex',
+            'materialTitle',
+            'subtitle',
+            'sections',
+            'isCustom'
+          ])
+        );
+      allow delete: if isValidId(elementId);
+    }
+
+    // Teacher custom AKM questions
+    match /customQuestions/{questionId} {
+      allow get: if isValidId(questionId);
+      allow list: if resource.data.visibility == 'classroom';
+      allow create: if isValidId(questionId)
+        && isValidCustomQuestion(incoming(), questionId);
+      allow update: if isValidId(questionId)
+        && isValidCustomQuestion(incoming(), questionId)
+        && incoming().id == existing().id
+        && incoming().visibility == existing().visibility
+        && (
+          isAdmin()
+          || incoming().diff(existing()).affectedKeys().hasOnly([
+            'elementId',
+            'difficulty',
+            'cognitiveLevel',
+            'type',
+            'prompt',
+            'options',
+            'correctIndices',
+            'explanation'
+          ])
+        );
+      allow delete: if isValidId(questionId);
+    }
+  }
+}
