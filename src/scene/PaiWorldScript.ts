@@ -65,6 +65,20 @@ export class PaiWorldScript extends xb.Script {
   private currentProgress = 0;
   private feedbackTimer = 0;
   private feedbackAnim: 'celebrate' | 'fall' | null = null;
+  private activeJump: {
+    from: THREE.Vector3;
+    to: THREE.Vector3;
+    elapsed: number;
+    duration: number;
+    arcHeight: number;
+    isCorrect: boolean;
+    landedParticlesDone: boolean;
+    fallAfter?: {
+      returnTo: THREE.Vector3;
+      fallElapsed: number;
+      fallDuration: number;
+    };
+  } | null = null;
 
   private peerAvatars = new Map<
     string,
@@ -338,6 +352,7 @@ export class PaiWorldScript extends xb.Script {
       this.walkTarget = null;
       if (this.walkMarker) this.walkMarker.visible = false;
       this.minigameOffset.set(0, 0, 0);
+      this.activeJump = null;
       this.playerVelY = 0;
       this.playerGrounded = true;
       this.activeWorld = buildMinigameWorld(this.activeGameId);
@@ -483,7 +498,45 @@ export class PaiWorldScript extends xb.Script {
     if (typeof chosenIndex === 'number' && this.activeGameId === 'grand_prix') {
       this.playerLane = Math.max(0, Math.min(3, chosenIndex));
     }
-    this.activeWorld?.triggerFeedback?.(isCorrect, chosenIndex);
+
+    // Capture the exact 3D world position of the chosen answer platform BEFORE feedback mutates it
+    const chosenPlatformPos =
+      this.activeGameId === 'puncak_nalar' && this.activeWorld?.getOptionWorldPos
+        ? this.activeWorld.getOptionWorldPos(chosenIndex ?? 0)
+        : null;
+
+    this.activeWorld?.triggerFeedback?.(isCorrect, chosenIndex, progress);
+
+    if (chosenPlatformPos && this.activeGameId === 'puncak_nalar') {
+      this.minigameOffset.set(0, 0, 0);
+      this.playerVelY = 0;
+      this.playerGrounded = true;
+      const safeTarget =
+        this.activeWorld?.getPlayerTargetPos?.(progress, this.playerLane) ??
+        this.playerPos.clone();
+
+      this.activeJump = {
+        from: this.playerPos.clone(),
+        to: chosenPlatformPos.clone(),
+        elapsed: 0,
+        duration: isCorrect ? 0.42 : 0.34,
+        arcHeight: isCorrect ? 1.85 : 1.5,
+        isCorrect,
+        landedParticlesDone: false,
+        fallAfter: isCorrect
+          ? undefined
+          : {
+              returnTo: safeTarget.clone(),
+              fallElapsed: 0,
+              fallDuration: 0.7,
+            },
+      };
+      this.feedbackAnim = isCorrect ? 'celebrate' : 'fall';
+      this.feedbackTimer = isCorrect ? 1.25 : 1.15;
+      this.shakeIntensity = isCorrect ? 0.1 : 0.26;
+      return;
+    }
+
     this.feedbackAnim = isCorrect ? 'celebrate' : 'fall';
     this.feedbackTimer = 1.25;
     this.shakeIntensity = isCorrect ? 0.12 : 0.28;
@@ -790,87 +843,198 @@ export class PaiWorldScript extends xb.Script {
         }
       }
 
-      // Jump arc offset (works in ALL minigames!)
-      if (!this.playerGrounded) {
-        this.playerVelY -= 19 * dt;
-        this.minigameOffset.y += this.playerVelY * dt;
-        if (this.minigameOffset.y <= 0) {
-          this.minigameOffset.y = 0;
-          this.playerVelY = 0;
-          this.playerGrounded = true;
-        }
-      }
+      // Scripted parabolic Roblox parkour jump onto the chosen answer platform (Puncak Nalar)
+      if (this.activeJump) {
+        const j = this.activeJump;
+        let jumpState: 'jump' | 'celebrate' | 'fall' = 'jump';
 
-      if (this.activeWorld.getPlayerTargetPos) {
-        const target = this.activeWorld.getPlayerTargetPos(this.currentProgress, this.playerLane);
+        if (j.elapsed < j.duration) {
+          j.elapsed = Math.min(j.duration, j.elapsed + dt);
+          const t = j.elapsed / j.duration;
+          // Smooth ease-out horizontal + crisp parabolic vertical arc
+          const easeT = 1 - Math.pow(1 - t, 1.6);
+          const x = THREE.MathUtils.lerp(j.from.x, j.to.x, easeT);
+          const z = THREE.MathUtils.lerp(j.from.z, j.to.z, easeT);
+          const baseY = THREE.MathUtils.lerp(j.from.y, j.to.y, t);
+          const arcY = Math.sin(t * Math.PI) * j.arcHeight;
+          this.playerPos.set(x, baseY + arcY, z);
 
-        // Allow responsive local step-around on platform/stage via touch joystick or WASD/Arrows
-        if (this.activeGameId !== 'grand_prix' && isMovingInput) {
-          const speed = 4.2 * Math.min(1, inputMag);
-          this.minigameOffset.x = THREE.MathUtils.clamp(
-            this.minigameOffset.x + (mx / inputMag) * speed * dt,
-            -2.1,
-            2.1
-          );
-          this.minigameOffset.z = THREE.MathUtils.clamp(
-            this.minigameOffset.z + (mz / inputMag) * speed * dt,
-            -1.2,
-            1.2
-          );
           if (this.playerAvatar) {
-            this.playerAvatar.group.rotation.y = Math.atan2(mx, mz);
+            const dx = j.to.x - j.from.x;
+            const dz = j.to.z - j.from.z;
+            if (Math.hypot(dx, dz) > 0.05) {
+              this.playerAvatar.group.rotation.y = Math.atan2(dx, dz);
+            }
           }
-        } else if (this.activeGameId === 'grand_prix') {
-          this.minigameOffset.x = 0;
-          this.minigameOffset.z = 0;
+          jumpState = 'jump';
+
+          if (j.elapsed >= j.duration && !j.landedParticlesDone) {
+            j.landedParticlesDone = true;
+            this.spawnParticles(
+              j.to.clone().add(new THREE.Vector3(0, 0.4, 0)),
+              j.isCorrect ? 0x22c55e : 0xef4444,
+              j.isCorrect ? 24 : 16
+            );
+            if (!j.fallAfter) {
+              // Landed safely on the answer platform (now turning into gray stepping platform)
+              this.playerPos.copy(j.to);
+              this.activeJump = null;
+              if (this.playerAvatar) this.playerAvatar.group.rotation.y = Math.PI;
+            }
+          }
+        } else if (j.fallAfter) {
+          // Wrong platform crumbled underneath! Drop down then return safely to the gray stepping stone
+          const f = j.fallAfter;
+          f.fallElapsed = Math.min(f.fallDuration, f.fallElapsed + dt);
+          const ft = f.fallElapsed / f.fallDuration;
+          jumpState = 'fall';
+          if (ft < 0.58) {
+            const dropRatio = ft / 0.58;
+            this.playerPos.set(j.to.x, j.to.y - dropRatio * dropRatio * 3.1, j.to.z);
+          } else {
+            const recRatio = (ft - 0.58) / 0.42;
+            const dropEndY = j.to.y - 3.1;
+            this.playerPos.set(
+              THREE.MathUtils.lerp(j.to.x, f.returnTo.x, recRatio),
+              THREE.MathUtils.lerp(dropEndY, f.returnTo.y, recRatio) +
+                Math.sin(recRatio * Math.PI) * 0.75,
+              THREE.MathUtils.lerp(j.to.z, f.returnTo.z, recRatio)
+            );
+          }
+          if (f.fallElapsed >= f.fallDuration) {
+            this.playerPos.copy(f.returnTo);
+            this.activeJump = null;
+            if (this.playerAvatar) this.playerAvatar.group.rotation.y = Math.PI;
+          }
         }
 
-        const goal = new THREE.Vector3(
-          target.x + this.minigameOffset.x,
-          target.y + this.minigameOffset.y,
-          target.z + this.minigameOffset.z
-        );
-        this.playerPos.lerp(goal, Math.min(1, dt * 8.5));
+        if (this.playerAvatar) {
+          this.playerAvatar.group.position.copy(this.playerPos);
+          this.playerAvatar.animState = jumpState;
+          this.playerAvatar.update(dt);
+        }
       } else {
-        // Free-roam inside Edu-Craft / Maze / Portal / Astro
-        const baseY = this.activeWorld.playerSpawn.y;
-        if (isMovingInput) {
-          const speed = 5.6 * Math.min(1, inputMag);
-          this.playerPos.x = THREE.MathUtils.clamp(
-            this.playerPos.x + (mx / inputMag) * speed * dt,
-            -6.8,
-            6.8
-          );
-          this.playerPos.z = THREE.MathUtils.clamp(
-            this.playerPos.z + (mz / inputMag) * speed * dt,
-            -5.2,
-            5.2
-          );
-          if (this.playerAvatar) {
-            this.playerAvatar.group.rotation.y = Math.atan2(mx, mz);
+        // Jump arc offset (works in ALL minigames!)
+        if (!this.playerGrounded) {
+          this.playerVelY -= 19 * dt;
+          this.minigameOffset.y += this.playerVelY * dt;
+          if (this.minigameOffset.y <= 0) {
+            this.minigameOffset.y = 0;
+            this.playerVelY = 0;
+            this.playerGrounded = true;
           }
         }
-        this.playerPos.y = baseY + this.minigameOffset.y;
-      }
 
-      if (this.playerAvatar) {
-        this.playerAvatar.group.position.copy(this.playerPos);
-        if (this.feedbackAnim) {
-          this.playerAvatar.animState = this.feedbackAnim;
-        } else if (!this.playerGrounded) {
-          this.playerAvatar.animState = 'jump';
-        } else if (this.activeGameId === 'grand_prix') {
-          this.playerAvatar.animState = 'drive';
-          this.playerAvatar.group.rotation.y = Math.PI;
-        } else if (this.activeGameId === 'astro_scanner') {
-          this.playerAvatar.animState = 'fly';
-          if (!isMovingInput) this.playerAvatar.group.rotation.y = Math.PI;
-        } else if (isMovingInput) {
-          this.playerAvatar.animState = 'walk';
+        if (this.activeWorld.getPlayerTargetPos) {
+          const target = this.activeWorld.getPlayerTargetPos(this.currentProgress, this.playerLane);
+
+          // Allow responsive local step-around on platform/stage via touch joystick or WASD/Arrows
+          if (this.activeGameId !== 'grand_prix' && isMovingInput) {
+            const isPuncakAir = this.activeGameId === 'puncak_nalar' && !this.playerGrounded;
+            const speed = (isPuncakAir ? 7.8 : 4.2) * Math.min(1, inputMag);
+            const maxX = isPuncakAir
+              ? 5.2
+              : this.activeGameId === 'puncak_nalar'
+                ? this.currentProgress === 0
+                  ? 2.45
+                  : 1.25
+                : 2.1;
+            const minZ = isPuncakAir ? -4.8 : -1.15;
+            const maxZ = 1.15;
+            this.minigameOffset.x = THREE.MathUtils.clamp(
+              this.minigameOffset.x + (mx / inputMag) * speed * dt,
+              -maxX,
+              maxX
+            );
+            this.minigameOffset.z = THREE.MathUtils.clamp(
+              this.minigameOffset.z + (mz / inputMag) * speed * dt,
+              minZ,
+              maxZ
+            );
+            if (this.playerAvatar) {
+              this.playerAvatar.group.rotation.y = Math.atan2(mx, mz);
+            }
+          } else if (this.activeGameId === 'grand_prix') {
+            this.minigameOffset.x = 0;
+            this.minigameOffset.z = 0;
+          }
+
+          // Keep grounded player neatly on top of their current gray stepping stone in Puncak Nalar
+          if (this.activeGameId === 'puncak_nalar' && this.playerGrounded) {
+            const safeMaxX = this.currentProgress === 0 ? 2.45 : 1.25;
+            if (Math.abs(this.minigameOffset.x) > safeMaxX) {
+              this.minigameOffset.x = THREE.MathUtils.damp(
+                this.minigameOffset.x,
+                THREE.MathUtils.clamp(this.minigameOffset.x, -safeMaxX, safeMaxX),
+                12,
+                dt
+              );
+            }
+            if (this.minigameOffset.z < -1.15) {
+              this.minigameOffset.z = THREE.MathUtils.damp(this.minigameOffset.z, -0.8, 12, dt);
+            }
+          }
+
+          const goal = new THREE.Vector3(
+            target.x + this.minigameOffset.x,
+            target.y + this.minigameOffset.y,
+            target.z + this.minigameOffset.z
+          );
+          this.playerPos.lerp(goal, Math.min(1, dt * 8.5));
+
+          // Physical parkour jump landing: jumping forward onto an answer platform selects it!
+          if (
+            this.activeGameId === 'puncak_nalar' &&
+            !this.playerGrounded &&
+            !this.feedbackAnim &&
+            this.activeWorld.getOptionAtPosition
+          ) {
+            const hitOpt = this.activeWorld.getOptionAtPosition(this.playerPos);
+            if (hitOpt !== null) {
+              this.callbacks.onClickOption?.(hitOpt);
+            }
+          }
         } else {
-          this.playerAvatar.animState = 'idle';
+          // Free-roam inside Edu-Craft / Maze / Portal / Astro
+          const baseY = this.activeWorld.playerSpawn.y;
+          if (isMovingInput) {
+            const speed = 5.6 * Math.min(1, inputMag);
+            this.playerPos.x = THREE.MathUtils.clamp(
+              this.playerPos.x + (mx / inputMag) * speed * dt,
+              -6.8,
+              6.8
+            );
+            this.playerPos.z = THREE.MathUtils.clamp(
+              this.playerPos.z + (mz / inputMag) * speed * dt,
+              -5.2,
+              5.2
+            );
+            if (this.playerAvatar) {
+              this.playerAvatar.group.rotation.y = Math.atan2(mx, mz);
+            }
+          }
+          this.playerPos.y = baseY + this.minigameOffset.y;
         }
-        this.playerAvatar.update(dt);
+
+        if (this.playerAvatar) {
+          this.playerAvatar.group.position.copy(this.playerPos);
+          if (this.feedbackAnim) {
+            this.playerAvatar.animState = this.feedbackAnim;
+          } else if (!this.playerGrounded) {
+            this.playerAvatar.animState = 'jump';
+          } else if (this.activeGameId === 'grand_prix') {
+            this.playerAvatar.animState = 'drive';
+            this.playerAvatar.group.rotation.y = Math.PI;
+          } else if (this.activeGameId === 'astro_scanner') {
+            this.playerAvatar.animState = 'fly';
+            if (!isMovingInput) this.playerAvatar.group.rotation.y = Math.PI;
+          } else if (isMovingInput) {
+            this.playerAvatar.animState = 'walk';
+          } else {
+            this.playerAvatar.animState = 'idle';
+          }
+          this.playerAvatar.update(dt);
+        }
       }
 
       const desiredCam = this.playerPos.clone().add(this.activeWorld.cameraOffset);
