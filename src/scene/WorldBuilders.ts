@@ -38,10 +38,8 @@ export interface BuiltWorld {
   cameraLookOffset: THREE.Vector3;
   updateWorld: (dt: number, elapsed: number, progress: number) => void;
   updateQuestionVisuals?: (q: QuestionItem | null, selectedIndices: number[]) => void;
-  triggerFeedback?: (isCorrect: boolean, chosenIndex?: number, nextProgress?: number) => void;
+  triggerFeedback?: (isCorrect: boolean, chosenIndex?: number) => void;
   getPlayerTargetPos?: (progress: number, laneIndex: number) => THREE.Vector3;
-  getOptionWorldPos?: (optionIndex: number) => THREE.Vector3 | null;
-  getOptionAtPosition?: (pos: THREE.Vector3) => number | null;
   rollDiceVisual?: (result: number) => void;
   setActivePortal?: (diff: 'mudah' | 'sedang' | 'sulit') => void;
   dispose: () => void;
@@ -584,189 +582,60 @@ export function buildMinigameWorld(gameId: GameId): BuiltWorld {
   }
 }
 
-// 1. PUNCAK NALAR (Mountain Parkour: Unobstructed Answer Platforms -> Convert to Gray Stepping Stones)
+// 1. PUNCAK NALAR (Mountain Parkour Platforms)
 function buildPuncakNalar(): BuiltWorld {
   const root = new THREE.Group();
   const interactables: THREE.Object3D[] = [];
   const stoneTex = makeStoneTexture(3);
 
-  const STEP_Y = 1.35;
-  const STEP_Z = 4.2;
-  const PANEL_W = 2.35;
-  const PANEL_H = 0.68;
-  const PANEL_D = 2.35;
-  const PANEL_SPACING = 2.75;
-
   root.add(makeSkyDome(0x0284c7, 0xfef3c7));
 
-  // Majestic mountain range backdrop surrounding the climb (kept wide so central sightline stays open)
+  // Majestic mountain range backdrop
   const mtnColors = [0x475569, 0x334155, 0x64748b, 0x1e293b];
   for (let i = 0; i < 8; i++) {
     const m = new THREE.Mesh(
-      new THREE.ConeGeometry(9 + (i % 3) * 4, 24 + (i % 4) * 7, 6),
+      new THREE.ConeGeometry(9 + (i % 3) * 4, 22 + (i % 4) * 7, 6),
       new THREE.MeshStandardMaterial({ color: mtnColors[i % mtnColors.length], roughness: 0.9 })
     );
-    const angle = (i / 8) * Math.PI * 2 + 0.35;
-    m.position.set(Math.cos(angle) * 44, 7, Math.sin(angle) * 44 - 16);
+    const angle = (i / 8) * Math.PI * 2;
+    m.position.set(Math.cos(angle) * 38, 7, Math.sin(angle) * 38 - 10);
     root.add(m);
 
+    // Snow cap
     const cap = new THREE.Mesh(
       new THREE.ConeGeometry(3.2, 6.2, 6),
       new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.7 })
     );
-    cap.position.set(m.position.x, m.position.y + 9 + (i % 4) * 2.5, m.position.z);
+    cap.position.set(m.position.x, m.position.y + 8 + (i % 4) * 2.5, m.position.z);
     root.add(cap);
   }
 
-  // Shared geometries & materials for conquered gray stone stepping platforms
-  const startSlabGeo = new THREE.BoxGeometry(6.2, 0.7, 3.6);
-  const startTrimGeo = new THREE.BoxGeometry(6.42, 0.16, 3.82);
-  const stepSlabGeo = new THREE.BoxGeometry(3.15, PANEL_H, 2.75);
-  const stepTrimGeo = new THREE.BoxGeometry(3.34, 0.16, 2.94);
-  const stepCapGeo = new THREE.BoxGeometry(3.2, 0.06, 2.8);
-
-  const grayMatEven = new THREE.MeshStandardMaterial({
-    map: stoneTex,
-    color: 0xcbd5e1,
-    roughness: 0.78,
-    metalness: 0.05,
-  });
-  const grayMatOdd = new THREE.MeshStandardMaterial({
-    map: stoneTex,
-    color: 0xb4c0ce,
-    roughness: 0.8,
-    metalness: 0.05,
-  });
-  const slateTrimMat = new THREE.MeshStandardMaterial({
-    color: 0x64748b,
-    roughness: 0.55,
-    metalness: 0.18,
-  });
-  const topRimMat = new THREE.MeshStandardMaterial({
-    color: 0xe2e8f0,
-    roughness: 0.5,
-    metalness: 0.1,
-  });
-
-  // Dynamic map of ONLY conquered gray stepping platforms (tier 0..currentTier).
-  // No gray platforms are ever created ahead of the player!
-  const conqueredPlatforms = new Map<
-    number,
-    { group: THREE.Group; x: number; targetScale: number }
-  >();
-
-  const createGrayPlatform = (tier: number, x: number, instant = false): THREE.Group => {
-    const existing = conqueredPlatforms.get(tier);
-    if (existing) {
-      existing.x = x;
-      existing.group.position.set(x, tier * STEP_Y - PANEL_H / 2, -tier * STEP_Z);
-      existing.group.visible = true;
-      existing.targetScale = 1;
-      if (instant) existing.group.scale.setScalar(1);
-      return existing.group;
-    }
-
-    const g = new THREE.Group();
-    const isStart = tier === 0;
-    const slab = new THREE.Mesh(
-      isStart ? startSlabGeo : stepSlabGeo,
-      tier % 2 === 0 ? grayMatEven : grayMatOdd
+  // Towering stepped parkour platforms (levels 0..16)
+  for (let tier = 0; tier <= 16; tier++) {
+    const plat = new THREE.Mesh(
+      new THREE.BoxGeometry(7.2, 0.7, 4.4),
+      new THREE.MeshStandardMaterial({
+        map: stoneTex,
+        color: tier % 2 === 0 ? 0xe2e8f0 : 0xcbd5e1,
+        roughness: 0.75,
+      })
     );
-    slab.receiveShadow = true;
-    slab.castShadow = true;
-    g.add(slab);
+    plat.position.set(0, tier * 1.4 - 0.35, -tier * 3.8);
+    plat.receiveShadow = true;
+    plat.castShadow = true;
+    root.add(plat);
+  }
 
-    const trim = new THREE.Mesh(isStart ? startTrimGeo : stepTrimGeo, slateTrimMat);
-    trim.position.y = -(isStart ? 0.35 : PANEL_H / 2) + 0.06;
-    trim.receiveShadow = true;
-    g.add(trim);
-
-    if (!isStart) {
-      const cap = new THREE.Mesh(stepCapGeo, topRimMat);
-      cap.position.y = PANEL_H / 2 - 0.02;
-      cap.receiveShadow = true;
-      g.add(cap);
-    }
-
-    g.position.set(x, tier * STEP_Y - (isStart ? 0.35 : PANEL_H / 2), -tier * STEP_Z);
-    g.scale.setScalar(instant ? 1 : 0.86);
-    root.add(g);
-    conqueredPlatforms.set(tier, { group: g, x, targetScale: 1 });
-    return g;
-  };
-
-  const pruneGrayPlatformsAbove = (maxTier: number): void => {
-    for (const [tier, entry] of conqueredPlatforms.entries()) {
-      if (tier > maxTier) {
-        root.remove(entry.group);
-        conqueredPlatforms.delete(tier);
-      }
-    }
-  };
-
-  const syncConqueredUpTo = (targetTier: number): void => {
-    pruneGrayPlatformsAbove(targetTier);
-    for (let t = 0; t <= targetTier; t++) {
-      if (!conqueredPlatforms.has(t)) {
-        createGrayPlatform(t, 0, true);
-      }
-    }
-  };
-
-  // Create ONLY the starting gray platform at tier 0
-  createGrayPlatform(0, 0, true);
-
-  // Interactive 4 answer platforms directly in front of the player (unobstructed!)
-  const panelCtrl = createOptionPanels('row', PANEL_SPACING, [PANEL_W, PANEL_H, PANEL_D], interactables);
-  // Align panel local baseY = 0 so panelCtrl.group.y = rowTier * STEP_Y - PANEL_H / 2 puts top surface at exact rowTier * STEP_Y
-  panelCtrl.panels.forEach((p) => {
-    p.baseY = 0;
-    p.targetY = 0;
-    p.mesh.position.y = 0;
-  });
-
-  let currentTier = 0;
-  let activeRowTier = 1;
-  let isLockedForFeedback = false;
-  let lastQuestionId: string | null = null;
-  let pendingConvert: {
-    tier: number;
-    x: number;
-    chosenIdx: number;
-    delay: number;
-    done: boolean;
-  } | null = null;
-  let rowPopScale = 1;
-  let feedbackOutcome: { isCorrect: boolean; chosenIdx: number } | null = null;
-
-  const positionAnswerRowForTier = (baseTier: number): void => {
-    activeRowTier = baseTier + 1;
-    const baseX = conqueredPlatforms.get(baseTier)?.x ?? 0;
-    const rowCenterX = THREE.MathUtils.clamp(baseX * 0.42, -2.5, 2.5);
-    panelCtrl.group.position.set(
-      rowCenterX,
-      activeRowTier * STEP_Y - PANEL_H / 2,
-      -activeRowTier * STEP_Z
-    );
-    rowPopScale = 0.08;
-    panelCtrl.group.scale.setScalar(rowPopScale);
-    panelCtrl.panels.forEach((p) => {
-      p.baseY = 0;
-      p.targetY = 0;
-      p.mesh.position.y = 0;
-      p.mesh.scale.setScalar(1);
-    });
-  };
-
-  positionAnswerRowForTier(0);
+  // Interactive 4 answer panels positioned ahead of current tier
+  const panelCtrl = createOptionPanels('row', 2.45, [2.1, 0.6, 1.8], interactables);
+  panelCtrl.group.position.set(0, 0.5, -3.5);
   root.add(panelCtrl.group);
 
-  // Flanking decorative clouds kept left/right so they never block the central climb view
+  // Floating clouds
   const clouds: THREE.Group[] = [];
   for (let i = 0; i < 8; i++) {
-    const c = createCloud(1.9);
-    const side = i % 2 === 0 ? -1 : 1;
-    c.position.set(side * (12 + (i % 3) * 4.5), 3.5 + i * 2.5, -i * 6.5 - 4);
+    const c = createCloud(2.0);
+    c.position.set(-22 + i * 7, 4 + i * 2.4, -i * 6);
     clouds.push(c);
     root.add(c);
   }
@@ -776,187 +645,31 @@ function buildPuncakNalar(): BuiltWorld {
     skyTop: 0x0284c7,
     skyBottom: 0xfef3c7,
     fogColor: 0xe0f2fe,
-    fogNear: 28,
-    fogFar: 105,
+    fogNear: 24,
+    fogFar: 95,
     interactables,
     playerSpawn: new THREE.Vector3(0, 0, 0),
-    cameraOffset: new THREE.Vector3(0, 5.2, 8.6),
-    cameraLookOffset: new THREE.Vector3(0, 1.65, -3.9),
+    cameraOffset: new THREE.Vector3(0, 4.6, 8.2),
+    cameraLookOffset: new THREE.Vector3(0, 1.8, -3.5),
     getPlayerTargetPos: (progress) => {
-      const tier = Math.max(0, progress);
-      const entry = conqueredPlatforms.get(tier);
-      const x = entry ? entry.x : 0;
-      return new THREE.Vector3(x, tier * STEP_Y, -tier * STEP_Z);
-    },
-    getOptionWorldPos: (optionIndex) => {
-      const p = panelCtrl.panels[optionIndex];
-      if (!p || !p.mesh.visible) return null;
-      return new THREE.Vector3(
-        panelCtrl.group.position.x + p.mesh.position.x,
-        activeRowTier * STEP_Y,
-        -activeRowTier * STEP_Z
-      );
-    },
-    getOptionAtPosition: (pos) => {
-      if (isLockedForFeedback) return null;
-      const rowZ = -activeRowTier * STEP_Z;
-      if (Math.abs(pos.z - rowZ) > PANEL_D * 0.62) return null;
-      for (let i = 0; i < panelCtrl.panels.length; i++) {
-        const p = panelCtrl.panels[i];
-        if (!p.mesh.visible) continue;
-        const wx = panelCtrl.group.position.x + p.mesh.position.x;
-        if (Math.abs(pos.x - wx) <= PANEL_W * 0.58) {
-          return i;
-        }
-      }
-      return null;
+      const tier = Math.min(16, Math.max(0, progress));
+      return new THREE.Vector3(0, tier * 1.4, -tier * 3.8);
     },
     updateWorld: (dt, elapsed, progress) => {
-      // Sync gray stepping platforms on session restore or unexpected progress jump
-      if (!isLockedForFeedback && progress !== currentTier) {
-        currentTier = Math.max(0, progress);
-        syncConqueredUpTo(currentTier);
-        positionAnswerRowForTier(currentTier);
-      }
-
-      // Smoothly pop-in newly spawned answer row
-      if (rowPopScale < 0.999) {
-        rowPopScale = THREE.MathUtils.damp(rowPopScale, 1, 10, dt);
-        panelCtrl.group.scale.setScalar(rowPopScale);
-      }
-
-      // Handle delayed conversion of chosen answer platform into a solid gray stepping stone
-      if (pendingConvert && !pendingConvert.done) {
-        pendingConvert.delay -= dt;
-        if (pendingConvert.delay <= 0) {
-          pendingConvert.done = true;
-          createGrayPlatform(pendingConvert.tier, pendingConvert.x, false);
-          // Hide the colored answer panel right as the gray stepping stone appears in its exact place
-          const chosenPanel = panelCtrl.panels[pendingConvert.chosenIdx];
-          if (chosenPanel) {
-            chosenPanel.mesh.visible = false;
-          }
-        }
-      }
-
-      // Animate conquered gray stepping platforms' subtle solidify scale
-      for (const entry of conqueredPlatforms.values()) {
-        if (Math.abs(entry.group.scale.x - entry.targetScale) > 0.002) {
-          const s = THREE.MathUtils.damp(entry.group.scale.x, entry.targetScale, 11, dt);
-          entry.group.scale.setScalar(s);
-        }
-      }
-
-      // Animate answer platforms
-      panelCtrl.panels.forEach((p, i) => {
-        if (!p.mesh.visible) return;
-        if (isLockedForFeedback && feedbackOutcome) {
-          if (feedbackOutcome.isCorrect) {
-            if (i === feedbackOutcome.chosenIdx) {
-              // Stay firm & steady as player lands, ready to turn into gray stone
-              p.mesh.position.y = THREE.MathUtils.damp(p.mesh.position.y, 0.04, 12, dt);
-            } else {
-              // Unchosen platforms cleanly sink and shrink away
-              p.mesh.position.y = THREE.MathUtils.damp(p.mesh.position.y, -1.8, 7, dt);
-              const sc = THREE.MathUtils.damp(p.mesh.scale.x, 0.01, 9, dt);
-              p.mesh.scale.setScalar(sc);
-              if (sc < 0.05) p.mesh.visible = false;
-            }
-          } else {
-            if (i === feedbackOutcome.chosenIdx) {
-              // Wrong platform drops rapidly underneath the player
-              p.mesh.position.y = THREE.MathUtils.damp(p.mesh.position.y, -4.2, 6, dt);
-            } else {
-              p.mesh.position.y = THREE.MathUtils.damp(p.mesh.position.y, -1.2, 5, dt);
-            }
-          }
-        } else {
-          const bob = Math.sin(elapsed * 2.4 + i * 0.75) * 0.05;
-          p.mesh.position.y += (p.targetY + bob - p.mesh.position.y) * Math.min(1, dt * 8);
-        }
-      });
-
-      // Gently drift clouds alongside the player's altitude
+      const tier = Math.min(15, Math.max(0, progress));
+      const targetZ = -tier * 3.8 - 2.6;
+      const targetY = tier * 1.4 + 0.5;
+      panelCtrl.group.position.y += (targetY - panelCtrl.group.position.y) * Math.min(1, dt * 6);
+      panelCtrl.group.position.z += (targetZ - panelCtrl.group.position.z) * Math.min(1, dt * 6);
+      panelCtrl.animate(dt, elapsed);
       clouds.forEach((c, idx) => {
-        c.position.x += Math.sin(elapsed * 0.35 + idx) * dt * 0.35;
-        const minCloudY = currentTier * STEP_Y - 4;
-        if (c.position.y < minCloudY) {
-          c.position.y += 20;
-          c.position.z -= 26;
-        }
+        c.position.x += Math.sin(elapsed * 0.4 + idx) * dt * 0.4;
       });
     },
-    updateQuestionVisuals: (q, sel) => {
-      const isNewQuestion = !q || q.id !== lastQuestionId || isLockedForFeedback;
-      if (isNewQuestion) {
-        isLockedForFeedback = false;
-        feedbackOutcome = null;
-        pendingConvert = null;
-        lastQuestionId = q ? q.id : null;
-        syncConqueredUpTo(currentTier);
-        positionAnswerRowForTier(currentTier);
-      }
-      panelCtrl.applyQuestion(q, sel);
-      // Keep baseY flush at 0 (selected PGK panels lift slightly +0.22)
-      panelCtrl.panels.forEach((p, idx) => {
-        p.baseY = 0;
-        p.targetY = sel.includes(idx) ? 0.22 : 0;
-      });
-    },
-    triggerFeedback: (isCorrect, chosenIdx, nextProgress) => {
-      const visibleFallback = panelCtrl.panels.findIndex((p) => p.mesh.visible);
-      const resolvedIdx =
-        typeof chosenIdx === 'number' && panelCtrl.panels[chosenIdx]?.mesh.visible
-          ? chosenIdx
-          : Math.max(0, visibleFallback);
-
-      isLockedForFeedback = true;
-      feedbackOutcome = { isCorrect, chosenIdx: resolvedIdx };
-
-      const chosenPanel = panelCtrl.panels[resolvedIdx];
-      const chosenWorldX = chosenPanel
-        ? panelCtrl.group.position.x + chosenPanel.mesh.position.x
-        : 0;
-
-      if (isCorrect) {
-        const targetTier = typeof nextProgress === 'number' ? nextProgress : currentTier + 1;
-        currentTier = Math.max(0, targetTier);
-
-        if (chosenPanel) {
-          chosenPanel.glowMat.emissive.setHex(0x22c55e);
-          chosenPanel.glowMat.emissiveIntensity = 0.72;
-        }
-        // Convert the answered platform into a solid gray stepping stone right as player lands
-        pendingConvert = {
-          tier: currentTier,
-          x: chosenWorldX,
-          chosenIdx: resolvedIdx,
-          delay: 0.36,
-          done: false,
-        };
-      } else {
-        const targetTier =
-          typeof nextProgress === 'number' ? nextProgress : Math.max(0, currentTier - 1);
-        currentTier = Math.max(0, targetTier);
-        // Remove any conquered gray stepping platform above currentTier so nothing blocks ahead
-        pruneGrayPlatformsAbove(currentTier);
-        if (chosenPanel) {
-          chosenPanel.glowMat.emissive.setHex(0xef4444);
-          chosenPanel.glowMat.emissiveIntensity = 0.85;
-        }
-      }
-    },
+    updateQuestionVisuals: (q, sel) => panelCtrl.applyQuestion(q, sel),
+    triggerFeedback: (ok, idx) => panelCtrl.flashOutcome(ok, idx),
     dispose: () => {
       stoneTex.dispose();
-      startSlabGeo.dispose();
-      startTrimGeo.dispose();
-      stepSlabGeo.dispose();
-      stepTrimGeo.dispose();
-      stepCapGeo.dispose();
-      grayMatEven.dispose();
-      grayMatOdd.dispose();
-      slateTrimMat.dispose();
-      topRimMat.dispose();
       panelCtrl.dispose();
     },
   };
